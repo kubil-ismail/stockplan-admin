@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Check, ExternalLink, Flag, Info, Lock, Plus } from "lucide-react";
+import { ExternalLink, Info, Lock, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,107 +12,68 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/co
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { logoOf } from "@/lib/emiten-data";
+import { describeError, publishCompany, saveCompany, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { fmtWhen } from "@/lib/format";
 import { dec, num } from "@/lib/ipo";
+import { profileFromForm, profileToForm, type KeyId, type LvKey, type MetricId, type TrKey } from "@/lib/emiten-form";
 import {
-  AffixInput, ChoiceCards, Counter, EditorShell, EntityAvatar, Err, FileSlot, FilterTabs, FormField, Help, LinkBtn, LogoUpload, Note, RemoveBtn,
-  Section, ShareBar, StatusBadge, type Check as CheckItem, type FileInfo, type Tone,
+  AffixInput, ChoiceCards, Counter, EditorShell, EntityAvatar, Err, FilterTabs, FormField, Help, LinkBtn, Note, RemoveBtn,
+  Section, ShareBar, StatusBadge, type Check as CheckItem, type Tone,
 } from "./form-ui";
 
 let uid = 1000;
 const id = <T extends object>(o: T) => ({ id: uid++, ...o });
 type L<T> = (T & { id: number })[];
-const SEKTOR = ["Energi", "Barang Baku", "Perindustrian", "Barang Konsumen Primer", "Barang Konsumen Non-Primer", "Kesehatan", "Keuangan", "Properti & Real Estat", "Teknologi", "Infrastruktur", "Transportasi & Logistik"];
+const withIds = <T extends object>(l: T[]): L<T> => l.map((x) => id(x));
+/** Copy of a list row without its UI-only id. */
+const omitId = <T extends { id: number }>(x: T): Omit<T, "id"> => { const c: Partial<T> = { ...x }; delete c.id; return c as Omit<T, "id">; };
 
-const TR = {
-  aktif: { label: "Aktif", sub: "Diperdagangkan normal", dot: "#16A34A", tone: "success" as Tone, effect: "" },
-  suspend: { label: "Suspend", sub: "Dihentikan sementara", dot: "#DC2626", tone: "danger" as Tone, effect: "Banner merah di halaman emiten berisi alasan dan tanggal. Tetap muncul di tema dan portofolio dengan label Suspend." },
-  monitor: { label: "Monitoring", sub: "Papan pemantauan khusus", dot: "#F59E0B", tone: "warning" as Tone, effect: "Label “Pemantauan khusus” di halaman emiten dan di daftar tema, disertai alasan di bawah." },
-  delisted: { label: "Delisted", sub: "Keluar dari bursa", dot: "#78716C", tone: "neutral" as Tone, effect: "Hilang dari pencarian dan tema. Pengguna yang masih menyimpannya di portofolio, tesis, atau watchlist tetap melihatnya dengan label Delisted dan mendapat email." },
-} as const;
-type TrKey = keyof typeof TR;
+const TR: Record<TrKey, { label: string; sub: string; dot: string; tone: Tone; effect: string }> = {
+  aktif: { label: "Aktif", sub: "Diperdagangkan normal", dot: "#16A34A", tone: "success", effect: "" },
+  suspend: { label: "Suspend", sub: "Dihentikan sementara", dot: "#DC2626", tone: "danger", effect: "Banner merah di halaman emiten berisi alasan dan tanggal. Tetap muncul di tema dan portofolio dengan label Suspend." },
+  monitor: { label: "Monitoring", sub: "Papan pemantauan khusus", dot: "#F59E0B", tone: "warning", effect: "Label “Pemantauan khusus” di halaman emiten dan di daftar tema, disertai alasan di bawah." },
+  delisted: { label: "Delisted", sub: "Keluar dari bursa", dot: "#78716C", tone: "neutral", effect: "Hilang dari pencarian dan tema. Pengguna yang masih menyimpannya di portofolio, tesis, atau watchlist tetap melihatnya dengan label Delisted dan mendapat email." },
+};
 
-const KD = [["mc", "Market cap", "Rp", "T"], ["pbv", "PBV", "", "x"], ["roe", "ROE", "", "%"], ["gm", "Margin bruto", "", "%"], ["da", "Utang / aset", "", "%"]] as const;
-const MT = [["sales", "Penjualan", "Rp triliun"], ["profit", "Laba bersih", "Rp triliun, milik induk"], ["margin", "Margin bruto", "persen"]] as const;
+const KD: readonly [KeyId, string, string, string][] = [["mc", "Market cap", "Rp", "T"], ["pbv", "PBV", "", "x"], ["roe", "ROE", "", "%"], ["gm", "Margin bruto", "", "%"], ["da", "Utang / aset", "", "%"]];
+const MT: readonly [MetricId, string, string][] = [["sales", "Penjualan", "Rp triliun"], ["profit", "Laba bersih", "Rp triliun, milik induk"], ["margin", "Margin bruto", "persen"]];
 const PG = [["str", "Kekuatan", "#16A34A"], ["weak", "Kelemahan", "#DC2626"], ["mon", "Yang dipantau", "#F59E0B"]] as const;
 const REV_COL = ["#1C1917", "#FEA722", "#A8A29E", "#78716C", "#D6D3D1"];
-const LV = { h: "Tinggi", m: "Sedang", l: "Rendah" } as const;
+const LV: Record<LvKey, string> = { h: "Tinggi", m: "Sedang", l: "Rendah" };
+const PUB: Record<PublishKey, [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Draf tersimpan", "neutral"], published: ["Terbit", "success"] };
+const MAX_PERIODS = 6; // backend limit
 
-type Lk = { y: string; q: string; rel: string; x: FileInfo | null; p: FileInfo | null; xErr?: boolean };
-const file = (name: string, size: number, at: string, xErr?: boolean) => ({ name, size, at, xErr });
-
-// shortcut: BUMI sample data from the design; load from /admin/api/companies/:kode and PATCH on save/publish.
-export function EmitenEditForm({ kode }: { kode: string }) {
-  const [logo, setLogo] = useState(logoOf("BUMI"));
-  const [name, setName] = useState("Bumi Resources Tbk");
-  const [tk, setTk] = useState(kode);
-  const [tr, setTr] = useState<TrKey>("aktif");
-  const [trSince, setTrSince] = useState("");
-  const [trSrc, setTrSrc] = useState("");
-  const [trWhy, setTrWhy] = useState("");
-  const [sektor, setSektor] = useState("Energi");
-  const [sub, setSub] = useState("Batu bara");
-  const [asOf, setAsOf] = useState("Harga penutupan 31 Okt 2026 · LK H1-2026");
-  const [asSrc, setAsSrc] = useState("BEI & laporan keuangan BUMI");
-  const [keys, setKeys] = useState<Record<string, { v: string; tip: string }>>({
-    mc: { v: "44,9", tip: 'Harga saham × jumlah saham beredar (371,3 miliar lembar). Gambaran berapa "harga" seluruh perusahaan di bursa.' },
-    pbv: { v: "1,5", tip: "Harga saham dibanding nilai buku per lembar. 1,5x artinya pasar menghargai BUMI 1,5 kali nilai bersih asetnya." },
-    roe: { v: "7", tip: "Laba bersih dibanding modal pemegang saham. Mengukur seberapa efisien modal diubah jadi laba." },
-    gm: { v: "17", tip: "Sisa penjualan setelah dikurangi biaya pokok (biaya tambang). Makin tinggi, makin untung tiap ton yang dijual." },
-    da: { v: "36", tip: "Porsi aset yang dibiayai utang. Semakin rendah umumnya semakin ringan beban bunganya." },
-  });
-  const [shortSum, setShortSum] = useState("Produsen batu bara termal terbesar di Indonesia, lewat anak usaha KPC dan Arutmin.");
-  const [sum, setSum] = useState("BUMI adalah induk tambang batu bara termal Grup Bakrie dan **produsen batu bara terbesar di Indonesia berdasarkan volume**. Uangnya hampir seluruhnya datang dari menjual batu bara termal (bahan bakar PLTU) yang ditambang dua anak usahanya, KPC dan Arutmin — jadi kinerjanya mengikuti harga batu bara termal dunia.");
-  const [sumSrc, setSumSrc] = useState("Laporan Tahunan 2025");
-  const [pts, setPts] = useState<Record<string, L<{ t: string }>>>({
-    str: [id({ t: "Skala terbesar di RI" }), id({ t: "Neraca sudah sehat (utang/aset 36%)" }), id({ t: "Margin bruto naik 8% → 17%" })],
-    weak: [id({ t: "ROE cuma 7%" }), id({ t: "~44% ekuitas milik minoritas anak usaha" }), id({ t: "Laba kecil dibanding skala" })],
-    mon: [id({ t: "Liabilitas naik Rp7 T di H1-2026" }), id({ t: "Harga batu bara termal" }), id({ t: "Aksi korporasi soal porsi KPC" })],
-  });
-  const [pers, setPers] = useState<L<{ p: string; sub: string }>>([id({ p: "2023", sub: "setahun" }), id({ p: "2024", sub: "setahun" }), id({ p: "2025", sub: "setahun" }), id({ p: "H1-2026", sub: "6 bulan" })]);
-  const [tv, setTv] = useState<Record<string, string[]>>({ sales: ["25,9", "22,0", "24,1", "15,5"], profit: ["0,2", "1,1", "1,4", "1,1"], margin: ["8", "12", "17", "17"] });
-  const [notes, setNotes] = useState<Record<string, string>>({
-    sales: "Penjualan stabil di Rp22–26 T per tahun — bisnis matang bervolume besar, bukan pertumbuhan cepat. H1-2026 baru 6 bulan, jadi belum setara setahun penuh.",
-    profit: "Laba milik pemegang saham induk naik dari Rp0,2 T ke Rp1,4 T, dan 6 bulan pertama 2026 sudah Rp1,1 T. Tapi tetap kecil dibanding penjualan Rp24 T — sebagian besar laba KPC mengalir ke minoritas.",
-    margin: "Ceritanya di sini: pendorong laba bukan volume, melainkan margin yang membaik seiring pemulihan harga batu bara dan pengendalian biaya.",
-  });
-  const [metric, setMetric] = useState<(typeof MT)[number][0]>("sales");
-  const [lk, setLk] = useState<L<Lk>>([
-    id({ y: "2026", q: "Q3", rel: "2026-10-30", x: null, p: null }),
-    id({ y: "2026", q: "Q2", rel: "2026-07-31", x: file("BUMI_2026_Q2_instance.zip", 1.3, "31 Jul 2026"), p: file("FinancialStatement-2026-II-BUMI.pdf", 6.8, "31 Jul 2026") }),
-    id({ y: "2026", q: "Q1", rel: "2026-04-30", x: file("BUMI_2026_Q1_instance.zip", 1.1, "2 Mei 2026", true), p: file("FinancialStatement-2026-I-BUMI.pdf", 5.2, "2 Mei 2026") }),
-    id({ y: "2025", q: "FY", rel: "2026-03-30", x: file("BUMI_2025_Tahunan_instance.zip", 2.4, "31 Mar 2026"), p: file("FinancialStatement-2025-Tahunan-BUMI.pdf", 14.6, "31 Mar 2026") }),
-    id({ y: "2025", q: "Q3", rel: "2025-10-31", x: file("BUMI_2025_Q3_instance.zip", 1.2, "3 Nov 2025"), p: file("FinancialStatement-2025-III-BUMI.pdf", 6.1, "3 Nov 2025") }),
-    id({ y: "2024", q: "FY", rel: "2025-03-28", x: file("BUMI_2024_Tahunan_instance.zip", 2.2, "1 Apr 2025"), p: file("FinancialStatement-2024-Tahunan-BUMI.pdf", 13.9, "1 Apr 2025") }),
-  ]);
-  const [lkF, setLkF] = useState<"all" | "q" | "fy">("all");
-  const [lkAdd, setLkAdd] = useState<{ y: string; q: string; rel: string } | null>(null);
-  const [rev, setRev] = useState<L<{ name: string; pct: string; src: string }>>([id({ name: "Penjualan ekspor", pct: "52", src: "Laporan Keuangan 2025, Catatan 29" }), id({ name: "Penjualan domestik", pct: "48", src: "" })]);
-  const [subs, setSubs] = useState<L<{ name: string; biz: string; p: string; tk: string; show: boolean }>>([
-    id({ name: "Kaltim Prima Coal (KPC)", biz: "Tambang batu bara termal, Kalimantan Timur", p: "50,99", tk: "", show: true }),
-    id({ name: "Arutmin Indonesia", biz: "Tambang batu bara termal, Kalimantan Selatan", p: "90", tk: "", show: true }),
-    id({ name: "Pendopo Energi Batubara", biz: "Konsesi batu bara", p: "84,48", tk: "", show: true }),
-    id({ name: "IndoCoal Resources", biz: "Perusahaan investasi grup batu bara", p: "70", tk: "", show: true }),
-    id({ name: "Bumi Resources Minerals", biz: "Tambang emas & mineral", p: "20,09", tk: "BRMS", show: true }),
-    id({ name: "Darma Henwa", biz: "Kontraktor tambang", p: "12,44", tk: "DEWA", show: true }),
-  ]);
-  const [sh, setSh] = useState<L<{ name: string; p: string }>>([id({ name: "Mach Energy (Hongkong) Ltd", p: "45,78" })]);
-  const [shNote, setShNote] = useState("Free float besar, tapi pemilik akhir di balik Mach Energy tidak bisa ditelusuri dari data BEI.");
-  const [mg, setMg] = useState<L<{ name: string; role: string }>>([id({ name: "Sharif Cicip Sutardjo", role: "Presiden Komisaris" }), id({ name: "Adika Nuraga Bakrie", role: "Presiden Direktur" }), id({ name: "Agoes Projosasmito", role: "Wakil Presiden Direktur" })]);
-  const [rk, setRk] = useState<L<{ t: string; d: string; lv: keyof typeof LV }>>([
-    id({ t: "Harga batu bara termal", d: "Komoditas siklikal, paling terpapar transisi energi dibanding batu bara metalurgi.", lv: "h" }),
-    id({ t: "Porsi minoritas besar", d: "44% ekuitas dan hampir separuh laba KPC milik minoritas; sulit berubah tanpa aksi korporasi.", lv: "h" }),
-    id({ t: "Imbal hasil rendah", d: "ROE 7% walau skala besar; perbaikan masih bergantung harga komoditas.", lv: "m" }),
-    id({ t: "Utang naik lagi", d: "Liabilitas +Rp7 T di H1-2026; kalau berlanjut, hasil deleveraging bisa terkikis.", lv: "m" }),
-  ]);
-  const [nw, setNw] = useState<L<{ t: string; src: string; d: string }>>([
-    id({ t: "BUMI targetkan jual 76–78 juta ton batu bara di 2026, naik dari target 2025 (73–75 juta ton)", src: "Laporan keuangan BUMI", d: "30 Mar 2026" }),
-    id({ t: "Produksi semester I 2025 tercatat 35,9 juta ton — KPC 25,3 juta ton, Arutmin 10,6 juta ton", src: "Data operasional BUMI", d: "H1 2025" }),
-    id({ t: "Laporan Analisis Saham BUMI: margin bruto naik ke 17%, ROE masih tertahan di 7%", src: "StockPlan", d: "30 Okt 2026" }),
-  ]);
-  const [repDone, setRepDone] = useState<string[]>([]);
-  const [status, setStatus] = useState<"review" | "draft" | "ok">("review");
+export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sectors: { slug: string; name: string }[] }) {
+  const [view, setView] = useState(loaded);
+  const [p0] = useState(() => profileFromForm(loaded.form)); // initial values; edited copies live in the states below
+  const code = view.company.ticker;
+  const [name, setName] = useState(p0.name);
+  const [tr, setTr] = useState<TrKey>(p0.tr);
+  const [trSince, setTrSince] = useState(p0.trSince);
+  const [trSrc, setTrSrc] = useState(p0.trSrc);
+  const [trWhy, setTrWhy] = useState(p0.trWhy);
+  const [sektor, setSektor] = useState(p0.sektor);
+  const [sub, setSub] = useState(p0.sub);
+  const [priceDate, setPriceDate] = useState(p0.priceDate);
+  const [period, setPeriod] = useState(p0.period);
+  const [asSrc, setAsSrc] = useState(p0.asSrc);
+  const [keys, setKeys] = useState(p0.keys);
+  const [shortSum, setShortSum] = useState(p0.shortSum);
+  const [sum, setSum] = useState(p0.sum);
+  const [sumSrc, setSumSrc] = useState(p0.sumSrc);
+  const [pts, setPts] = useState<Record<"str" | "weak" | "mon", L<{ t: string }>>>({ str: withIds(p0.str.map((t) => ({ t }))), weak: withIds(p0.weak.map((t) => ({ t }))), mon: withIds(p0.mon.map((t) => ({ t }))) });
+  const [pers, setPers] = useState(() => withIds(p0.pers));
+  const [tv, setTv] = useState(p0.tv);
+  const [notes, setNotes] = useState(p0.notes);
+  const [metric, setMetric] = useState<MetricId>("sales");
+  const [rev, setRev] = useState(() => withIds(p0.rev));
+  const [subs, setSubs] = useState(() => withIds(p0.subs));
+  const [sh, setSh] = useState(() => withIds(p0.sh));
+  const [shNote, setShNote] = useState(p0.shNote);
+  const [mg, setMg] = useState(() => withIds(p0.mg));
+  const [rk, setRk] = useState(() => withIds(p0.rk));
+  const [nw, setNw] = useState(() => withIds(p0.nw));
+  const [busy, setBusy] = useState(false);
 
   // generic list patch/remove/add
   const patch = <T extends { id: number }>(set: React.Dispatch<React.SetStateAction<T[]>>, i: number, f: Partial<T>) => set((l) => l.map((x) => (x.id === i ? { ...x, ...f } : x)));
@@ -121,22 +82,18 @@ export function EmitenEditForm({ kode }: { kode: string }) {
     value: row[k] as string, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => patch(set, row.id, { [k]: e.target.value } as Partial<T>),
   });
 
-  // --- derived / validation
-  const code = tk.trim().toUpperCase();
-  const tkBad = !/^[A-Z]{4}$/.test(code);
+  // --- derived / validation (mirrors the backend checklist in lib/adminCompanies.js `sections`; the API has the final say on publish)
   const trNA = tr !== "aktif";
   const trOk = !trNA || (!!trSince && !!trSrc.trim() && !!trWhy.trim());
-  const idOk = !tkBad && !!name.trim() && !!sub.trim() && trOk;
+  const idOk = !!name.trim() && !!sub.trim() && trOk;
   const keysOk = KD.every(([k]) => keys[k].v.trim() !== "");
   const lastGm = tv.margin[tv.margin.length - 1];
-  const sumOk = !!sum.trim() && sum.length <= 400, shortOk = !!shortSum.trim() && shortSum.length <= 100;
+  const sumOk = !!sum.trim() && sum.length <= 400 && !!sumSrc.trim(), shortOk = !!shortSum.trim() && shortSum.length <= 100;
   const ptsOk = PG.every(([k]) => pts[k].length > 0 && pts[k].every((p) => p.t.trim() && p.t.length <= 60));
-  const trendOk = MT.every(([m]) => pers.every((_, i) => (tv[m][i] ?? "").trim() !== "") && !!notes[m].trim());
-  const lkDone = (r: Lk) => !!r.x && !!r.p && !r.xErr && !r.x.up && !r.p.up;
-  const lkBad = lk.filter((r) => !lkDone(r)).length, lkOk = lk.length > 0 && lkBad === 0;
+  const trendOk = pers.length >= 2 && MT.every(([m]) => pers.every((_, i) => (tv[m][i] ?? "").trim() !== "") && !!notes[m].trim());
   const revTot = Math.round(rev.reduce((a, r) => a + num(r.pct), 0) * 100) / 100;
   const noSrc = rev.filter((r) => !r.src.trim()).length;
-  const revOk = revTot === 100 && noSrc === 0 && rev.length > 0;
+  const revOk = revTot === 100 && noSrc === 0 && rev.every((r) => r.name.trim());
   const revMsg = revTot !== 100 ? `${revTot < 100 ? "kurang" : "lebih"} ${dec(Math.abs(100 - revTot), 2)}%` : noSrc ? `${noSrc} segmen belum punya sumber` : "siap diterbitkan";
   const grpOk = subs.length > 0 && subs.every((s) => s.name.trim() && num(s.p) > 0 && num(s.p) <= 100);
   const shTot = Math.round(sh.reduce((a, s) => a + num(s.p), 0) * 100) / 100;
@@ -146,12 +103,11 @@ export function EmitenEditForm({ kode }: { kode: string }) {
   const nwOk = nw.every((x) => x.t.trim() && x.src.trim() && x.d.trim());
 
   const checks: CheckItem[] = [
-    { group: "Profil", label: "Identitas & status", ok: idOk, href: "#s-id", note: idOk ? "" : trOk ? "Nama/kode" : "Lengkapi status" },
+    { group: "Profil", label: "Identitas & status", ok: idOk, href: "#s-id", note: idOk ? "" : trOk ? "Nama/subsektor" : "Lengkapi status" },
     { group: "Profil", label: "Angka utama", ok: keysOk, href: "#s-angka", note: keysOk ? "" : "Ada yang kosong" },
     { group: "Profil", label: "Ringkasan bisnis", ok: sumOk && shortOk, href: "#s-ringkas", note: sumOk && shortOk ? "" : "Perlu dicek" },
     { group: "Profil", label: "Poin kekuatan dkk.", ok: ptsOk, href: "#s-poin", note: ptsOk ? "" : "Kosong / >60 karakter" },
     { group: "Keuangan", label: "Tren keuangan", ok: trendOk, href: "#s-tren", note: trendOk ? "" : "Ada sel kosong" },
-    { group: "Keuangan", label: "Laporan keuangan", ok: lkOk, href: "#s-lk", note: lkOk ? "" : `${lkBad} periode belum lengkap` },
     { group: "Keuangan", label: "Sumber pendapatan", ok: revOk, href: "#s-pend", note: revOk ? "" : revMsg },
     { group: "Kepemilikan", label: "Struktur grup", ok: grpOk, href: "#s-grup", note: grpOk ? "" : "Cek porsi" },
     { group: "Kepemilikan", label: "Pemegang saham", ok: shOk, href: "#s-saham", note: shOk ? "" : "Total >100%" },
@@ -161,64 +117,64 @@ export function EmitenEditForm({ kode }: { kode: string }) {
     { group: "Konteks", label: "Tema & rantai nilai", ok: true, href: "#s-tema", note: "Modul Tema" },
   ];
   const canPub = checks.every((c) => c.ok);
+  const sectorName = sectors.find((x) => x.slug === sektor)?.name ?? "Tanpa sektor";
 
-  const REPS = [
-    { id: "r1", text: "Porsi kepemilikan di Darma Henwa sepertinya sudah berubah setelah right issue tahun ini.", meta: "Andi W. · 3 Nov 2026 · Bagian: Struktur grup", href: "#s-grup" },
-    { id: "r2", text: "Laba bersih H1-2026 di grafik beda dengan laporan keuangan yang baru dirilis.", meta: "sari.k@… · 4 Nov 2026 · Bagian: Tren keuangan", href: "#s-tren" },
-  ].filter((r) => !repDone.includes(r.id));
-  const ST: Record<"review" | "draft" | "ok", [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Draf tersimpan", "neutral"], ok: ["Terbit", "success"] };
+  const currentForm = () => profileToForm({
+    name, sektor, sub, tr, trSince, trSrc, trWhy, priceDate, period, asSrc, keys, shortSum, sum, sumSrc,
+    str: pts.str.map((p) => p.t), weak: pts.weak.map((p) => p.t), mon: pts.mon.map((p) => p.t),
+    pers: pers.map(omitId), tv, notes, rev: rev.map(omitId), subs: subs.map(omitId), sh: sh.map(omitId), shNote, mg: mg.map(omitId), rk: rk.map(omitId), nw: nw.map(omitId),
+  }, view.form);
+
+  // Saving replaces the whole draft; customers keep seeing the published version until "Terbitkan".
+  const save = async () => {
+    const r = await saveCompany(code, currentForm());
+    if (!r.ok) { toast(describeError(r.error)); return null; }
+    setView(r.data);
+    return r.data;
+  };
+  const saveDraft = async () => { setBusy(true); const v = await save(); setBusy(false); if (v) toast("Draf tersimpan. Pengguna masih melihat versi yang sudah terbit."); };
+  const publish = async () => {
+    if (!canPub) return toast(`Belum bisa terbit: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`);
+    setBusy(true);
+    const v = await save(); // publish uses the saved draft, so unsaved edits go first
+    const r = v ? await publishCompany(code) : null;
+    setBusy(false);
+    if (!r) return;
+    if (!r.ok) return toast(describeError(r.error));
+    setView(r.data);
+    toast(`Perubahan ${code} diterbitkan dan langsung tampil di aplikasi`);
+  };
 
   const header = (
-    <>
-      <div className="flex flex-wrap items-center gap-4">
-        <EntityAvatar code={code} logo={logo} />
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-2xl leading-tight font-bold tracking-tight"><code className="mr-2 font-mono text-[22px]">{code || "····"}</code>{name.trim() || "Nama emiten"}</h1>
-            <StatusBadge tone={TR[tr].tone}>{TR[tr].label}</StatusBadge>
-            <StatusBadge tone={ST[status][1]}>{ST[status][0]}</StatusBadge>
-          </div>
-          <span className="text-sm text-muted-foreground">{sektor} · {sub || "subsektor"} · Papan Utama · Dilihat pengguna 3.410 kali bulan ini</span>
-        </div>
+    <div className="flex flex-wrap items-center gap-4">
+      <EntityAvatar code={code} logo={view.company.logoUrl ?? undefined} />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex flex-wrap items-center gap-2.5">
-          <Link href={`/emiten/${code}`} className={buttonVariants({ variant: "outline" })}><ExternalLink aria-hidden />Lihat di aplikasi</Link>
-          <Button variant="outline" onClick={() => { setStatus("draft"); toast("Draf tersimpan. Pengguna masih melihat versi yang sudah terbit."); }}>Simpan draf</Button>
-          <Button aria-disabled={!canPub}
-            onClick={() => { if (!canPub) return toast(`Belum bisa terbit: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`); setStatus("ok"); toast(`Perubahan ${code} diterbitkan dan langsung tampil di aplikasi`); }}>Terbitkan</Button>
+          <h1 className="text-2xl leading-tight font-bold tracking-tight"><code className="mr-2 font-mono text-[22px]">{code}</code>{name.trim() || "Nama emiten"}</h1>
+          <StatusBadge tone={TR[tr].tone}>{TR[tr].label}</StatusBadge>
+          <StatusBadge tone={PUB[view.publishStatus.key][1]}>{PUB[view.publishStatus.key][0]}</StatusBadge>
         </div>
+        <span className="text-sm text-muted-foreground">{sectorName} · {sub || "subsektor"}</span>
       </div>
-      {REPS.length > 0 && (
-        <Card aria-labelledby="rep-h" className="gap-0 border-(--sp-danger-border) bg-(--sp-danger-bg) py-0">
-          <CardHeader className="flex items-center gap-2 py-3 text-[13.5px] text-[#991B1B]">
-            <Flag aria-hidden className="size-4" /><CardTitle id="rep-h" className="text-[13.5px]">{REPS.length} laporan pengguna belum ditangani</CardTitle><span className="text-[#B45309]">Dari form Bantuan › Data salah</span>
-          </CardHeader>
-          {REPS.map((r) => (
-            <Item key={r.id} className="rounded-none border-0 border-t border-(--sp-danger-border) bg-background/60 px-4">
-              <ItemContent className="min-w-[240px] gap-0.5"><ItemTitle className="line-clamp-none font-normal"><q>{r.text}</q></ItemTitle><ItemDescription className="text-xs">{r.meta}</ItemDescription></ItemContent>
-              <ItemActions>
-                <a href={r.href} className={buttonVariants({ variant: "outline", size: "sm" })}>Ke bagian ini</a>
-                <Button variant="outline" size="sm" onClick={() => { setRepDone([...repDone, r.id]); toast("Laporan ditandai selesai. Pelapor diberi tahu lewat email."); }}><Check aria-hidden />Tandai selesai</Button>
-              </ItemActions>
-            </Item>
-          ))}
-        </Card>
-      )}
-    </>
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Link href={`/emiten/${code}`} className={buttonVariants({ variant: "outline" })}><ExternalLink aria-hidden />Lihat di aplikasi</Link>
+        <Button variant="outline" disabled={busy} onClick={() => void saveDraft()}>Simpan draf</Button>
+        <Button aria-disabled={!canPub} disabled={busy} onClick={() => void publish()}>Terbitkan</Button>
+      </div>
+    </div>
   );
 
   const rail = (
     <Card>
-      <CardHeader><CardTitle>Riwayat perubahan</CardTitle></CardHeader>
-      <CardContent className="flex flex-col gap-2.5 text-[13px] leading-snug">
-        {[["Rina", "memperbarui tren keuangan H1-2026", "Hari ini, 09.40 · draf"], ["Dimas", "menerbitkan profil", "30 Okt 2026"], ["Sistem", "memperbarui manajemen dari BEI", "1 Okt 2026"]].map(([w, a, t]) => (
-          <div key={t}><span><b className="font-semibold">{w}</b> {a}</span><time className="block text-xs text-muted-foreground">{t}</time></div>
-        ))}
+      <CardHeader><CardTitle>Terakhir diperbarui</CardTitle></CardHeader>
+      <CardContent className="flex flex-col gap-1.5 text-[13px] leading-snug">
+        <span><b className="font-semibold">{view.updatedBy}</b></span>
+        <time className="text-xs text-muted-foreground">{fmtWhen(view.updatedAt)}</time>
+        {view.hasDraft && view.published && <Help>Ada draf yang belum diterbitkan. Pengguna masih melihat versi sebelumnya.</Help>}
       </CardContent>
     </Card>
   );
 
-  const lkShown = lk.filter((r) => lkF === "all" || (lkF === "fy" ? r.q === "FY" : r.q !== "FY"));
-  const lkDup = lkAdd && lk.some((r) => r.y === lkAdd.y && r.q === lkAdd.q) ? `Periode ${lkAdd.q === "FY" ? "Tahunan" : lkAdd.q} ${lkAdd.y} sudah ada.` : "";
   const barVals = tv[metric].map((v) => num(v));
   const barMax = Math.max(...barVals, 1);
   const rowCls = "grid items-center gap-2";
@@ -227,14 +183,15 @@ export function EmitenEditForm({ kode }: { kode: string }) {
     <EditorShell header={header} checks={checks} rail={rail}>
       <Section id="s-id" title="Identitas & status" desc="Biasanya ikut sinkron BEI. Ubah manual hanya kalau ada perubahan nama, kode, atau status yang belum tersinkron.">
         <div className="flex flex-wrap gap-5">
-          <LogoUpload code={code} logo={logo} onChange={setLogo} replace />
+          <div className="flex w-[132px] flex-none flex-col items-start gap-2">
+            <EntityAvatar code={code} logo={view.company.logoUrl ?? undefined} size={96} dark />
+            <Help>Logo mengikuti data BEI. Unggah logo belum tersedia (menunggu penyimpanan file).</Help>
+          </div>
           <div className="flex min-w-[260px] flex-1 flex-col gap-3.5">
             <div className="grid gap-3.5 sm:grid-cols-[1fr_140px]">
               <FormField label="Nama emiten" htmlFor="f-nm"><Input id="f-nm" aria-invalid={!name.trim()} value={name} onChange={(e) => setName(e.target.value)} /></FormField>
-              <FormField label="Kode saham" htmlFor="f-tk"><Input id="f-tk" aria-invalid={tkBad} className="font-mono" value={tk} maxLength={4} autoComplete="off" onChange={(e) => setTk(e.target.value.toUpperCase())} /></FormField>
+              <FormField label="Kode saham" htmlFor="f-tk"><Input id="f-tk" className="font-mono" value={code} disabled readOnly /></FormField>
             </div>
-            {code !== kode && !tkBad && <Note icon={<Info aria-hidden />}>Kode lama <b>{kode}</b> disimpan sebagai alias. Tautan, watchlist, portofolio, dan tesis pengguna tetap jalan dan otomatis pindah ke <b>{code}</b>.</Note>}
-            {tkBad && <Err>Kode saham harus 4 huruf.</Err>}
             <FormField label="Status perdagangan">
               <ChoiceCards label="Status perdagangan" value={tr} onChange={setTr} options={(Object.keys(TR) as TrKey[]).map((k) => ({ v: k, label: TR[k].label, sub: TR[k].sub, dot: TR[k].dot }))} />
             </FormField>
@@ -251,16 +208,17 @@ export function EmitenEditForm({ kode }: { kode: string }) {
           </div>
         </div>
         <div className="grid gap-3.5 border-t border-sp-line-soft pt-3.5 sm:grid-cols-3">
-          <FormField label="Sektor IDX-IC"><NativeSelect aria-label="Sektor IDX-IC" value={sektor} onChange={(e) => setSektor(e.target.value)}>{SEKTOR.map((s) => <NativeSelectOption key={s}>{s}</NativeSelectOption>)}</NativeSelect></FormField>
+          <FormField label="Sektor IDX-IC"><NativeSelect aria-label="Sektor IDX-IC" value={sektor} onChange={(e) => setSektor(e.target.value)}><NativeSelectOption value="">Pilih sektor</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect></FormField>
           <FormField label="Subsektor"><Input aria-label="Subsektor" aria-invalid={!sub.trim()} value={sub} onChange={(e) => setSub(e.target.value)} placeholder="mis. Batu bara" /></FormField>
-          <FormField label="Papan · tercatat"><span className="flex h-11 items-center text-sm">Utama · 1990</span></FormField>
+          <FormField label="Status data"><span className="flex h-11 items-center text-sm">{view.published ? "Pernah terbit" : "Belum pernah terbit"}</span></FormField>
         </div>
         {!sub.trim() && <Err>Subsektor wajib diisi.</Err>}
       </Section>
 
       <Section id="s-angka" title="Angka utama" desc="Lima angka di kepala halaman emiten. Diisi manual, tidak realtime, jadi selalu tulis per tanggal berapa.">
-        <div className="grid gap-3.5 sm:grid-cols-2">
-          <FormField label="Per tanggal" htmlFor="f-asof"><Input id="f-asof" value={asOf} onChange={(e) => setAsOf(e.target.value)} /></FormField>
+        <div className="grid gap-3.5 sm:grid-cols-3">
+          <FormField label="Tanggal harga penutupan" htmlFor="f-pd"><Input id="f-pd" type="date" value={priceDate} onChange={(e) => setPriceDate(e.target.value)} /></FormField>
+          <FormField label="Periode laporan keuangan" htmlFor="f-per"><Input id="f-per" maxLength={20} placeholder="mis. H1-2026" value={period} onChange={(e) => setPeriod(e.target.value)} /></FormField>
           <FormField label="Sumber" htmlFor="f-asrc"><Input id="f-asrc" value={asSrc} onChange={(e) => setAsSrc(e.target.value)} /></FormField>
         </div>
         <div className="grid gap-3.5 sm:grid-cols-2">
@@ -305,7 +263,7 @@ export function EmitenEditForm({ kode }: { kode: string }) {
       </Section>
 
       <Section id="s-tren" title="Tren keuangan" desc="Angka dari laporan keuangan, dalam triliun rupiah kecuali margin. Periode terakhir disorot di aplikasi."
-        aside={<Button variant="outline" size="sm"  onClick={() => { setPers([...pers, id({ p: "", sub: "" })]); setTv((v) => Object.fromEntries(Object.entries(v).map(([m, a]) => [m, [...a, ""]]))); }}><Plus aria-hidden />Periode</Button>}>
+        aside={<Button variant="outline" size="sm"  onClick={() => { if (pers.length >= MAX_PERIODS) return toast(`Maksimal ${MAX_PERIODS} periode`); setPers([...pers, id({ p: "", sub: "" })]); setTv((v) => ({ sales: [...v.sales, ""], profit: [...v.profit, ""], margin: [...v.margin, ""] })); }}><Plus aria-hidden />Periode</Button>}>
         <div className="overflow-x-auto">
           <div className="grid min-w-[520px] items-center gap-2" style={{ gridTemplateColumns: `150px repeat(${pers.length}, minmax(90px, 1fr))` }}>
             <span className="text-xs font-semibold tracking-[.05em] text-muted-foreground uppercase">Periode</span>
@@ -322,7 +280,7 @@ export function EmitenEditForm({ kode }: { kode: string }) {
               </div>
             ))}
             <span />
-            {pers.map((p, i) => <span key={p.id} className="text-center">{pers.length > 2 && <LinkBtn className="self-center text-xs text-(--sp-danger-text)" onClick={() => { drop(setPers, p.id); setTv((v) => Object.fromEntries(Object.entries(v).map(([m, a]) => [m, a.filter((_, j) => j !== i)]))); }}>Hapus</LinkBtn>}</span>)}
+            {pers.map((p, i) => <span key={p.id} className="text-center">{pers.length > 2 && <LinkBtn className="self-center text-xs text-(--sp-danger-text)" onClick={() => { drop(setPers, p.id); setTv((v) => ({ sales: v.sales.filter((_, j) => j !== i), profit: v.profit.filter((_, j) => j !== i), margin: v.margin.filter((_, j) => j !== i) })); }}>Hapus</LinkBtn>}</span>)}
           </div>
         </div>
         <div className="flex flex-col gap-2 border-t border-sp-line-soft pt-3.5">
@@ -336,42 +294,8 @@ export function EmitenEditForm({ kode }: { kode: string }) {
         </div>
       </Section>
 
-      <Section id="s-lk" title="Laporan keuangan" desc="Lampiran XBRL dan PDF per periode, persis seperti yang dirilis emiten di BEI. PDF bisa diunduh pengguna dari halaman emiten; XBRL dipakai untuk membaca angka Tren keuangan."
-        aside={<Button variant="outline" size="sm" aria-expanded={!!lkAdd}  onClick={() => setLkAdd(lkAdd ? null : { y: "2026", q: "FY", rel: "" })}><Plus aria-hidden />Periode</Button>}>
-        {lkAdd && (
-          <Card size="sm" className="grid gap-3 bg-accent px-3.5 shadow-none sm:grid-cols-3">
-            <FormField label="Tahun buku" htmlFor="lk-y"><NativeSelect id="lk-y" value={lkAdd.y} onChange={(e) => setLkAdd({ ...lkAdd, y: e.target.value })}>{Array.from({ length: 8 }, (_, i) => 2026 - i).map((y) => <NativeSelectOption key={y}>{y}</NativeSelectOption>)}</NativeSelect></FormField>
-            <FormField label="Tanggal rilis di BEI" htmlFor="lk-rel"><Input id="lk-rel" type="date"  value={lkAdd.rel} onChange={(e) => setLkAdd({ ...lkAdd, rel: e.target.value })} /></FormField>
-            <FormField label="Periode">
-              <ToggleGroup aria-label="Periode" variant="outline" spacing={1} value={[lkAdd.q]} onValueChange={(v) => v[0] && setLkAdd({ ...lkAdd, q: v[0] })} className="w-full">
-                {["Q1", "Q2", "Q3", "FY"].map((q) => <ToggleGroupItem key={q} value={q} className="h-11 flex-1 bg-background font-semibold data-pressed:border-foreground data-pressed:bg-foreground data-pressed:text-background">{q === "FY" ? "Tahunan" : q}</ToggleGroupItem>)}
-              </ToggleGroup>
-            </FormField>
-            {lkDup && <span className="sm:col-span-3"><Err>{lkDup}</Err></span>}
-            <div className="flex justify-end gap-2 sm:col-span-3">
-              <Button variant="outline" size="sm"  onClick={() => setLkAdd(null)}>Batal</Button>
-              <Button size="sm" onClick={() => { if (lkDup) return; setLk([id({ ...lkAdd, x: null, p: null }), ...lk].sort((a, b) => b.y.localeCompare(a.y))); setLkAdd(null); toast("Periode ditambahkan. Unggah XBRL dan PDF-nya."); }}>Tambah periode</Button>
-            </div>
-          </Card>
-        )}
-        {!lkOk && <Note icon={<Info aria-hidden />}>{lkBad} periode belum lengkap atau bermasalah. Tiap periode butuh XBRL yang terbaca dan PDF-nya sebelum profil bisa terbit.</Note>}
-        <div className="flex flex-wrap items-center gap-2">
-          <FilterTabs label="Saring periode" value={lkF} onChange={setLkF} tabs={[{ v: "all", label: "Semua", n: lk.length }, { v: "q", label: "Kuartalan", n: lk.filter((r) => r.q !== "FY").length }, { v: "fy", label: "Tahunan", n: lk.filter((r) => r.q === "FY").length }]} />
-          <Help className="ml-auto w-auto">XBRL .zip/.xbrl maks. 20 MB · PDF maks. 50 MB</Help>
-        </div>
-        {lkShown.map((r) => {
-          const setFile = (k: "x" | "p") => (v: FileInfo | null) => patch(setLk, r.id, { [k]: v, ...(k === "x" ? { xErr: false } : {}) } as Partial<Lk>);
-          return (
-            <div key={r.id} className="flex flex-col gap-2 border-t border-sp-line-soft pt-3">
-              <div className="flex flex-wrap items-center gap-2"><b className="text-sm font-semibold">{r.q === "FY" ? `Tahunan ${r.y}` : `${r.q} ${r.y}`}</b><StatusBadge tone={r.q === "FY" ? "info" : "neutral"}>{r.q === "FY" ? "Tahunan" : "Kuartalan"}</StatusBadge><small className="text-xs text-muted-foreground">{r.rel ? `rilis ${r.rel}` : ""}</small><span className="ml-auto"><RemoveBtn label={`Hapus periode ${r.q} ${r.y}`} onClick={() => drop(setLk, r.id)} /></span></div>
-              <div className="grid gap-2.5 md:grid-cols-2">
-                <div className="flex flex-col gap-1"><FileSlot value={r.x} onChange={setFile("x")} accept=".zip,.xbrl" ext="XBRL" maxMb={20} label={`XBRL ${r.q} ${r.y}`} onError={(m) => toast(m)} />{r.xErr && <Err>XBRL tidak terbaca. Unggah ulang file dari BEI.</Err>}</div>
-                <FileSlot value={r.p} onChange={setFile("p")} accept=".pdf" ext="PDF" maxMb={50} label={`PDF ${r.q} ${r.y}`} onError={(m) => toast(m)} />
-              </div>
-            </div>
-          );
-        })}
-        {lkShown.length === 0 && <Help className="py-4 text-center text-sm">Belum ada laporan untuk periode ini.</Help>}
+      <Section id="s-lk" title="Laporan keuangan" desc="Lampiran XBRL dan PDF per periode, persis seperti yang dirilis emiten di BEI.">
+        <Note tone="info" icon={<Info aria-hidden />}>Unggah laporan keuangan belum tersedia: server belum punya penyimpanan file, dan bagian ini belum ikut cek kelengkapan terbit.</Note>
       </Section>
 
       <Section id="s-pend" title="Sumber pendapatan" desc="Persentase per segmen. Totalnya harus 100% dan tiap baris wajib punya sumber.">
@@ -454,8 +378,10 @@ export function EmitenEditForm({ kode }: { kode: string }) {
         <LinkBtn onClick={() => setNw([...nw, id({ t: "", src: "", d: "" })])}>+ Tambah berita</LinkBtn>
       </Section>
 
-      <Section id="s-tema" title="Tema & rantai nilai" desc={<>Diatur dari halaman tema. Buka <Link href="/admin/tema/batubara" className="font-semibold underline underline-offset-2">Batubara</Link> untuk mengubah tahap atau porsi pendapatan.</>}>
-        <Item variant="outline"><ItemContent className="flex-row items-baseline gap-2"><ItemTitle>Batubara</ItemTitle><ItemDescription>· Tahap 2 · Pemilik tambang termal</ItemDescription></ItemContent><ItemActions><StatusBadge tone="success">Terbit</StatusBadge></ItemActions></Item>
+      <Section id="s-tema" title="Tema & rantai nilai" desc="Diatur dari halaman tema: tahap dan porsi pendapatan emiten ada di sana.">
+        {view.themes.length ? view.themes.map((t) => (
+          <Item key={t.slug} variant="outline"><ItemContent className="flex-row items-baseline gap-2"><ItemTitle><Link href={`/admin/tema/${t.slug}`} className="hover:underline">{t.name}</Link></ItemTitle><ItemDescription>· {t.stageCount} tahap</ItemDescription></ItemContent></Item>
+        )) : <Help>Belum dipetakan ke tema mana pun.</Help>}
       </Section>
     </EditorShell>
   );

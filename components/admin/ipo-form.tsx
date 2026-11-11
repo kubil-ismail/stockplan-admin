@@ -5,72 +5,70 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
-import { existingCodes } from "@/lib/emiten-data";
+import { createCompany, describeError, publishCompany, saveCompany, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { emptyIpoState, ipoFromForm, ipoToForm } from "@/lib/emiten-form";
 import { dec, fdShort, lembar, num, rp, scheduleError, stageIndex, type Dates } from "@/lib/ipo";
 import {
-  AffixInput, ChoiceCards, Counter, EditorShell, EntityAvatar, Err, FileSlot, FormField, Help, LinkBtn, LogoUpload, Note, RemoveBtn,
-  Section, ShareBar, StatusBadge, ToggleRow, type Check, type FileInfo,
+  AffixInput, ChoiceCards, Counter, EditorShell, EntityAvatar, Err, FormField, Help, LinkBtn, Note, RemoveBtn,
+  Section, ShareBar, StatusBadge, ToggleRow, type Check, type Tone,
 } from "./form-ui";
 
-const SEKTOR = ["Energi", "Barang Baku", "Perindustrian", "Barang Konsumen Primer", "Barang Konsumen Non-Primer", "Kesehatan", "Keuangan", "Properti & Real Estat", "Teknologi", "Infrastruktur", "Transportasi & Logistik"];
 const PAPAN = [
   { v: "utama", label: "Utama", sub: "Emiten besar, rekam jejak panjang" },
   { v: "pengembangan", label: "Pengembangan", sub: "Belum memenuhi syarat papan utama" },
   { v: "akselerasi", label: "Akselerasi", sub: "Aset kecil atau menengah" },
   { v: "baru", label: "Ekonomi Baru", sub: "Teknologi, saham hak suara multipel" },
-];
-const BAR = ["#1C1917", "#FEA722", "#A8A29E", "#78716C", "#D6D3D1"];
-const TODAY = "2026-11-06"; // shortcut: fixed "today" from the design; use the real date once data is live.
-const DOCS = [
-  { k: "awal", label: "Prospektus awal", help: "Untuk masa bookbuilding", req: true },
-  { k: "fin", label: "Prospektus final", help: "Setelah efektif OJK, berisi harga final", req: false },
-  { k: "add", label: "Tambahan informasi", help: "Perbaikan/addendum, kalau ada", req: false },
 ] as const;
+const BAR = ["#1C1917", "#FEA722", "#A8A29E", "#78716C", "#D6D3D1"];
+const PUB: Record<PublishKey, [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Draf tersimpan", "neutral"], published: ["Terbit", "success"] };
 
 let uid = 100;
 type Item = { id: number; t: string; p?: string };
 const withId = <T extends object>(o: T) => ({ id: uid++, ...o });
+const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-// shortcut: sample values from the design (ABNU); start empty and POST to /admin/api/companies once the API exists.
-export function IpoForm() {
-  const [logo, setLogo] = useState("");
-  const [name, setName] = useState("PT Andalan Baterai Nusantara Tbk");
-  const [tk, setTk] = useState("ABNU");
-  const [sektor, setSektor] = useState("Barang Baku");
-  const [sub, setSub] = useState("Nikel & bahan baterai");
-  const [papan, setPapan] = useState("utama");
-  const [shortSum, setShortSum] = useState("Pengolah bijih nikel menjadi bahan baku baterai kendaraan listrik di Sulawesi Tengah.");
-  const [longSum, setLongSum] = useState("ABNU mengolah bijih nikel kadar rendah dari tambangnya di Morowali menjadi **MHP (mixed hydroxide precipitate)**, bahan baku utama katoda baterai kendaraan listrik. Hampir seluruh pendapatannya datang dari menjual MHP ke produsen prekursor baterai, jadi kinerjanya mengikuti harga nikel dunia dan permintaan baterai EV.");
-  const [dt, setDt] = useState<Dates>({ bbS: "2026-10-20", bbE: "2026-10-27", ojk: "2026-10-30", puS: "2026-11-04", puE: "2026-11-10", jt: "2026-11-10", ls: "2026-11-12" });
-  const [pLo, setPLo] = useState("420");
-  const [pHi, setPHi] = useState("480");
-  const [pFin, setPFin] = useState("450");
-  const [shares, setShares] = useState("2.500.000.000");
-  const [porsi, setPorsi] = useState("20");
-  const [uw, setUw] = useState<Item[]>([withId({ t: "PT Sekuritas Nusantara Raya" }), withId({ t: "PT Arta Kencana Sekuritas" })]);
-  const [wr, setWr] = useState(false);
-  const [wrRatio, setWrRatio] = useState("");
-  const [wrPrice, setWrPrice] = useState("");
-  const [ud, setUd] = useState<Item[]>([withId({ t: "Pembangunan smelter HPAL tahap 2", p: "65" }), withId({ t: "Modal kerja", p: "20" }), withId({ t: "Pelunasan sebagian utang bank", p: "15" })]);
-  const [docs, setDocs] = useState<Record<string, FileInfo | null>>({ awal: { name: "Prospektus-Awal-ABNU.pdf", size: 8.4, at: "20 Okt 2026" }, fin: null, add: null });
-  const [soon, setSoon] = useState(true);
-  const [auto, setAuto] = useState(true);
-  const [saved, setSaved] = useState(false);
+/** Add a new IPO company (no `view`) or edit one the API already has (`view`). The ticker cannot change once created. */
+export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: { slug: string; name: string }[] }) {
+  const [view, setView] = useState(loaded ?? null);
+  const [s0] = useState(() => (loaded ? ipoFromForm(loaded.company.ticker, loaded.form) : emptyIpoState()));
+  const [name, setName] = useState(s0.name);
+  const [tk, setTk] = useState(s0.tk);
+  const [sektor, setSektor] = useState(s0.sektor);
+  const [sub, setSub] = useState(s0.sub);
+  const [papan, setPapan] = useState<string>(s0.papan);
+  const [shortSum, setShortSum] = useState(s0.shortSum);
+  const [longSum, setLongSum] = useState(s0.longSum);
+  const [dt, setDt] = useState<Dates>(s0.dt);
+  const [pLo, setPLo] = useState(s0.pLo);
+  const [pHi, setPHi] = useState(s0.pHi);
+  const [pFin, setPFin] = useState(s0.pFin);
+  const [shares, setShares] = useState(s0.shares);
+  const [porsi, setPorsi] = useState(s0.porsi);
+  const [uw, setUw] = useState<Item[]>(() => s0.uw.map((t) => withId({ t })));
+  const [wr, setWr] = useState(s0.wr);
+  const [wrRatio, setWrRatio] = useState(s0.wrRatio);
+  const [wrPrice, setWrPrice] = useState(s0.wrPrice);
+  const [ud, setUd] = useState<Item[]>(() => s0.ud.map((u) => withId(u)));
+  const [soon, setSoon] = useState(s0.soon);
+  const [auto, setAuto] = useState(s0.auto);
+  const [busy, setBusy] = useState(false);
+  const [apiTkErr, setApiTkErr] = useState("");
+  const [today] = useState(todayIso);
 
+  const saved = !!view;
   const code = tk.trim().toUpperCase();
-  const tkErr = !code ? "Kode saham wajib diisi." : !/^[A-Z]{4}$/.test(code) ? "Kode saham harus 4 huruf." : existingCodes.includes(code) ? `Kode ${code} sudah dipakai emiten lain. Cek lagi kode dari pengumuman BEI.` : "";
-  const idOk = !tkErr && !!name.trim() && !!sub.trim() && shortSum.length <= 100 && longSum.length <= 400;
+  const tkErr = apiTkErr || (!code ? "Kode saham wajib diisi." : !/^[A-Z]{4}$/.test(code) ? "Kode saham harus 4 huruf." : "");
+  const idOk = !tkErr && !!name.trim() && !!sub.trim() && !!shortSum.trim() && shortSum.length <= 100 && !!longSum.trim() && longSum.length <= 400;
 
   const jdErr = scheduleError(dt);
   const jdOk = !!dt.ls && !jdErr;
   const stages: [string, string, string][] = [["Bookbuilding", dt.bbS, dt.bbE], ["Efektif OJK", dt.ojk, dt.ojk], ["Penawaran umum", dt.puS, dt.puE], ["Penjatahan", dt.jt, dt.jt], ["Pencatatan", dt.ls, dt.ls]];
-  const cur = stageIndex(stages, TODAY);
+  const cur = stageIndex(stages, today);
   const stageLabel = cur < 0 ? "Belum mulai" : cur >= 4 ? "Sudah tercatat" : Number.isInteger(cur) ? `Tahap: ${stages[cur][0]}` : `Menunggu ${stages[Math.ceil(cur)][0].toLowerCase()}`;
 
   const lo = num(pLo), hi = num(pHi), fin = num(pFin), sh = num(shares), pr = num(porsi);
@@ -86,40 +84,66 @@ export function IpoForm() {
   const udFull = ud.every((u) => u.t.trim());
   const udOk = udTot === 100 && udFull;
   const udMsg = udTot !== 100 ? `· ${udTot < 100 ? "kurang" : "lebih"} ${dec(Math.abs(100 - udTot), 2)}%` : udFull ? "· pas" : "· ada tujuan kosong";
-  const dokOk = !!docs.awal && !docs.awal.up;
 
+  // Same four sections as the backend IPO checklist (lib/adminCompanies.js `sections`).
   const checks: Check[] = [
     { group: "Emiten", label: "Identitas", ok: idOk, href: "#i-id", note: idOk ? "" : tkErr ? "Cek kode saham" : "Ada yang kosong" },
     { group: "Penawaran", label: "Jadwal IPO", ok: jdOk, href: "#i-jadwal", note: jdOk ? "" : dt.ls ? "Urutan tanggal" : "Tgl. pencatatan kosong" },
     { group: "Penawaran", label: "Detail penawaran", ok: tawarOk, href: "#i-tawar", note: tawarOk ? "" : pErr ? "Cek harga" : "Ada yang kosong" },
     { group: "Penawaran", label: "Penggunaan dana", ok: udOk, href: "#i-dana", note: udOk ? "" : `Total ${udTot}%` },
-    { group: "Dokumen & tampilan", label: "Prospektus", ok: dokOk, href: "#i-dok", note: dokOk ? (fin && !docs.fin ? "Final menyusul" : "") : "Prospektus awal" },
-    { group: "Dokumen & tampilan", label: "Tampil di aplikasi", ok: true, href: "#i-tampil" },
   ];
-  const canNext = checks.every((c) => c.ok);
+  const canPublish = checks.every((c) => c.ok);
+  const sectorName = sectors.find((x) => x.slug === sektor)?.name ?? "Tanpa sektor";
 
   const patchList = (set: React.Dispatch<React.SetStateAction<Item[]>>, id: number, f: Partial<Item>) => set((l) => l.map((x) => (x.id === id ? { ...x, ...f } : x)));
   const setDate = (k: keyof Dates) => (e: React.ChangeEvent<HTMLInputElement>) => setDt({ ...dt, [k]: e.target.value });
 
+  const currentForm = () => ipoToForm({
+    name, tk: code, sektor, sub, papan: papan as typeof s0.papan, shortSum, longSum, dt, pLo, pHi, pFin, shares, porsi,
+    uw: uw.map((u) => u.t), wr, wrRatio, wrPrice, ud: ud.map((u) => ({ t: u.t, p: u.p ?? "" })), soon, auto,
+  }, view?.form);
+
+  // First save creates the company (POST); later saves replace the draft (PATCH). Both leave customers' view untouched.
+  const save = async () => {
+    if (tkErr || !name.trim()) { toast("Isi nama dan kode saham yang valid dulu"); return null; }
+    const r = view ? await saveCompany(code, currentForm()) : await createCompany({ ticker: code, ...currentForm() });
+    if (!r.ok) {
+      if (r.error.code === "TICKER_TAKEN") setApiTkErr(r.error.fields?.ticker ?? r.error.message);
+      toast(describeError(r.error));
+      return null;
+    }
+    setView(r.data);
+    return r.data;
+  };
+  const saveDraft = async () => { setBusy(true); const v = await save(); setBusy(false); if (v) toast(`Draf ${code} tersimpan. Belum tampil di aplikasi.`); };
+  const publish = async () => {
+    if (!canPublish) return toast(`Lengkapi dulu: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`);
+    setBusy(true);
+    const v = await save(); // publish uses the saved draft
+    const r = v ? await publishCompany(code) : null;
+    setBusy(false);
+    if (!r) return;
+    if (!r.ok) return toast(describeError(r.error));
+    setView(r.data);
+    toast(`${code} diterbitkan. Tampil di aplikasi sebagai “Segera IPO”.`);
+  };
+
+  const pub = view ? PUB[view.publishStatus.key] : null;
   const header = (
     <div className="flex flex-wrap items-center gap-4">
-      <EntityAvatar code={code || "IPO"} logo={logo} dark />
+      <EntityAvatar code={code || "IPO"} logo={view?.company.logoUrl ?? undefined} dark />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="text-2xl leading-tight font-bold tracking-tight"><code className="mr-2 font-mono text-[22px]">{code || "····"}</code>{name.trim() || "Nama perusahaan"}</h1>
-          <StatusBadge tone="info">IPO baru</StatusBadge>
-          <StatusBadge tone="neutral">{saved ? "Draf tersimpan" : "Belum disimpan"}</StatusBadge>
+          <StatusBadge tone="info">IPO</StatusBadge>
+          <StatusBadge tone={pub ? pub[1] : "neutral"}>{pub ? pub[0] : "Belum disimpan"}</StatusBadge>
         </div>
         <span className="text-sm text-muted-foreground">Belum tercatat di BEI. Harga dan data perdagangan baru ikut sinkron mulai tanggal pencatatan.</span>
       </div>
       <div className="flex items-center gap-2.5">
-        <Link href="/admin/emiten" className={buttonVariants({ variant: "outline" })}>Batal</Link>
-        <Button variant="outline" onClick={() => { if (tkErr || !name.trim()) return toast("Isi nama dan kode saham yang valid dulu"); setSaved(true); toast(`Draf ${code} tersimpan. Belum tampil di aplikasi.`); }}>Simpan draf</Button>
-        {canNext ? (
-          <Link href={`/admin/emiten/${code}`} className={buttonVariants()}>Simpan &amp; lanjut isi profil</Link>
-        ) : (
-          <Button aria-disabled onClick={() => toast(`Lengkapi dulu: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`)}>Simpan &amp; lanjut isi profil</Button>
-        )}
+        <Link href="/admin/emiten" className={buttonVariants({ variant: "outline" })}>{saved ? "Kembali" : "Batal"}</Link>
+        <Button variant="outline" disabled={busy} onClick={() => void saveDraft()}>Simpan draf</Button>
+        <Button aria-disabled={!canPublish} disabled={busy} onClick={() => void publish()}>Terbitkan</Button>
       </div>
     </div>
   );
@@ -130,10 +154,10 @@ export function IpoForm() {
       <CardContent className="flex flex-col gap-2">
         <Card size="sm" className="bg-accent shadow-none">
           <CardContent className="flex flex-col gap-2">
-            <div className="flex items-center gap-2.5"><EntityAvatar code={code || "IPO"} logo={logo} size={32} /><div className="flex min-w-0 flex-col leading-tight"><code className="font-mono text-xs font-semibold">{code || "····"}</code><span className="truncate text-[13px]">{name.trim() || "Nama perusahaan"}</span></div></div>
+            <div className="flex items-center gap-2.5"><EntityAvatar code={code || "IPO"} logo={view?.company.logoUrl ?? undefined} size={32} /><div className="flex min-w-0 flex-col leading-tight"><code className="font-mono text-xs font-semibold">{code || "····"}</code><span className="truncate text-[13px]">{name.trim() || "Nama perusahaan"}</span></div></div>
             <StatusBadge tone="info" className="self-start">{dt.ls ? `Segera IPO · ${fdShort(dt.ls)}` : "Segera IPO"}</StatusBadge>
             <p className={cn("text-[13.5px] leading-snug", !shortSum.trim() && "text-sp-faint")}>{shortSum.trim() || "Deskripsi singkat belum diisi"}</p>
-            <small className="text-xs text-muted-foreground">{sektor} · {sub.trim() || "subsektor"}</small>
+            <small className="text-xs text-muted-foreground">{sectorName} · {sub.trim() || "subsektor"}</small>
           </CardContent>
         </Card>
         {!soon && <Help>Tidak tampil di aplikasi sampai tanggal pencatatan.</Help>}
@@ -153,23 +177,26 @@ export function IpoForm() {
     <EditorShell header={header} checks={checks} rail={rail}>
       <Section id="i-id" title="Identitas" desc="Sesuai prospektus. Kode saham diberikan BEI dan tidak boleh sama dengan emiten lain.">
         <div className="flex flex-wrap gap-5">
-          <LogoUpload code={code} logo={logo} onChange={setLogo} />
+          <div className="flex w-[132px] flex-none flex-col items-start gap-2">
+            <EntityAvatar code={code || "IPO"} logo={view?.company.logoUrl ?? undefined} size={96} dark />
+            <Help>Unggah logo belum tersedia (menunggu penyimpanan file).</Help>
+          </div>
           <div className="flex min-w-[260px] flex-1 flex-col gap-3.5">
             <div className="grid gap-3.5 sm:grid-cols-[1fr_140px]">
               <FormField label="Nama perusahaan" htmlFor="i-nm"><Input id="i-nm" aria-invalid={!name.trim()} value={name} onChange={(e) => setName(e.target.value)} placeholder="PT … Tbk" /></FormField>
-              <FormField label="Kode saham" htmlFor="i-tk"><Input id="i-tk" aria-invalid={!!tkErr} className="font-mono" value={tk} onChange={(e) => setTk(e.target.value.toUpperCase())} maxLength={4} autoComplete="off" placeholder="ABCD" /></FormField>
+              <FormField label="Kode saham" htmlFor="i-tk"><Input id="i-tk" aria-invalid={!!tkErr} className="font-mono" value={tk} disabled={saved} onChange={(e) => { setTk(e.target.value.toUpperCase()); setApiTkErr(""); }} maxLength={4} autoComplete="off" placeholder="ABCD" /></FormField>
             </div>
             {tkErr && <Err>{tkErr}</Err>}
             <div className="grid gap-3.5 sm:grid-cols-2">
-              <FormField label="Sektor IDX-IC" htmlFor="i-sk"><NativeSelect id="i-sk" value={sektor} onChange={(e) => setSektor(e.target.value)}>{SEKTOR.map((s) => <NativeSelectOption key={s}>{s}</NativeSelectOption>)}</NativeSelect></FormField>
+              <FormField label="Sektor IDX-IC" htmlFor="i-sk"><NativeSelect id="i-sk" value={sektor} onChange={(e) => setSektor(e.target.value)}><NativeSelectOption value="">Pilih sektor</NativeSelectOption>{sectors.map((x) => <NativeSelectOption key={x.slug} value={x.slug}>{x.name}</NativeSelectOption>)}</NativeSelect></FormField>
               <FormField label="Subsektor" htmlFor="i-ss"><Input id="i-ss" aria-invalid={!sub.trim()} value={sub} onChange={(e) => setSub(e.target.value)} placeholder="mis. Batu bara" /></FormField>
             </div>
-            <FormField label="Papan pencatatan"><ChoiceCards label="Papan pencatatan" value={papan} onChange={setPapan} options={PAPAN} /></FormField>
-            <FormField label="Deskripsi singkat" hint="boleh menyusul — dipakai di kartu pencarian" htmlFor="i-sd">
+            <FormField label="Papan pencatatan"><ChoiceCards label="Papan pencatatan" value={papan} onChange={setPapan} options={[...PAPAN]} /></FormField>
+            <FormField label="Deskripsi singkat" hint="wajib untuk terbit — dipakai di kartu pencarian" htmlFor="i-sd">
               <Input id="i-sd" aria-invalid={shortSum.length > 100} value={shortSum} onChange={(e) => setShortSum(e.target.value)} placeholder="mis. Pengolah nikel untuk bahan baku baterai" />
               <div className="flex justify-end"><Counter n={shortSum.length} max={100} /></div>
             </FormField>
-            <FormField label="Deskripsi panjang" hint="boleh menyusul — jadi Ringkasan lengkap di halaman emiten" htmlFor="i-ld">
+            <FormField label="Deskripsi panjang" hint="wajib untuk terbit — jadi Ringkasan lengkap di halaman emiten" htmlFor="i-ld">
               <Textarea id="i-ld" aria-invalid={longSum.length > 400} className="min-h-[168px]" value={longSum} onChange={(e) => setLongSum(e.target.value)} placeholder="Bisnis apa, uangnya dari mana, dan apa yang menggerakkan kinerjanya. Dua sampai tiga kalimat bahasa sehari-hari." />
               <div className="flex justify-between gap-3"><Help>Ambil dari bab Kegiatan Usaha di prospektus. Apit dengan **dua bintang** untuk menebalkan satu frasa.</Help><Counter n={longSum.length} max={400} /></div>
             </FormField>
@@ -258,12 +285,7 @@ export function IpoForm() {
       </Section>
 
       <Section id="i-dok" title="Prospektus" desc="PDF dari e-IPO atau situs BEI. Pengguna bisa mengunduhnya dari halaman emiten selama masa penawaran.">
-        {DOCS.map((d) => (
-          <div key={d.k} className="grid items-center gap-3 border-t border-sp-line-soft pt-3 first:border-t-0 first:pt-0 sm:grid-cols-[200px_1fr]">
-            <div className="flex flex-col"><b className="flex items-center gap-2 text-sm font-semibold">{d.label}{d.req && <Badge variant="amber" className="h-[18px] text-[11px]">Wajib</Badge>}</b><Help>{d.help}</Help></div>
-            <FileSlot value={docs[d.k]} onChange={(v) => { setDocs((p) => ({ ...p, [d.k]: v })); if (v && !v.up) toast(`${d.label} terunggah`); }} accept=".pdf" ext="PDF" maxMb={50} label={d.label} onError={(m) => toast(m)} />
-          </div>
-        ))}
+        <Note tone="info" icon={<Info aria-hidden />}>Unggah prospektus belum tersedia: server belum punya penyimpanan file, dan dokumen belum ikut cek kelengkapan terbit.</Note>
       </Section>
 
       <Section id="i-tampil" title="Tampil di aplikasi" desc="Sebelum tercatat, emiten IPO hanya muncul di pencarian dengan label khusus.">
@@ -271,7 +293,7 @@ export function IpoForm() {
           <ToggleRow id="sw-soon" title="Tampilkan sebagai “Segera IPO”" desc="Muncul di pencarian dan halaman tema sebelum tanggal pencatatan, dengan jadwal dan prospektus. Tanpa harga perdagangan." on={soon} onChange={setSoon} />
           <ToggleRow id="sw-auto" title="Jadikan aktif otomatis saat tercatat" desc="Di tanggal pencatatan, status berubah jadi Aktif dan harga mulai ikut sinkron BEI." on={auto} onChange={setAuto} />
         </div>
-        <Note icon={<Info aria-hidden />}>Bagian profil lainnya (angka utama, tren keuangan, struktur grup, tema) diisi di halaman edit setelah emiten ini disimpan.</Note>
+        <Note icon={<Info aria-hidden />}>Bagian profil lainnya (angka utama, tren keuangan, struktur grup, tema) diisi lewat halaman edit setelah emiten tercatat di BEI.</Note>
       </Section>
     </EditorShell>
   );

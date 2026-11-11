@@ -32,7 +32,21 @@ async function call<T>(path: string, init?: RequestInit): Promise<Result<T>> {
   }
 }
 
-const post = <T>(path: string, body?: unknown) => call<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
+const send = <T>(method: string) => (path: string, body?: unknown) => call<T>(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+const post = <T>(path: string, body?: unknown) => send<T>("POST")(path, body);
+export const adminGet = <T>(path: string) => call<T>(path);
+export const adminPost = post;
+export const adminPatch = <T>(path: string, body: unknown) => send<T>("PATCH")(path, body);
+
+/** For non-JSON downloads (CSV). */
+export async function adminBlob(path: string): Promise<Result<Blob>> {
+  try {
+    const res = await fetch(`/admin/api${path}`, { credentials: "same-origin", cache: "no-store" });
+    return res.ok ? { ok: true, data: await res.blob() } : { ok: false, error: toApiError(res.status, await res.json().catch(() => null)) };
+  } catch {
+    return { ok: false, error: NETWORK_ERROR };
+  }
+}
 
 export type LoginResponse = { step: "two_factor" } | { admin: AdminUser };
 export const adminLogin = (email: string, password: string) => post<LoginResponse>("/auth/login", { email, password });

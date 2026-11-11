@@ -327,14 +327,14 @@ export function EmptyResult({ title, desc, onReset }: { title: string; desc: str
   );
 }
 
-/** "Showing x of y" + Prev/Next buttons (sample data has one page). */
-export function Pager({ text, onNext }: { text: React.ReactNode; onNext: () => void }) {
+/** "Showing x of y" + Prev/Next buttons. */
+export function Pager({ text, canPrev = false, canNext = true, onPrev, onNext }: { text: React.ReactNode; canPrev?: boolean; canNext?: boolean; onPrev?: () => void; onNext: () => void }) {
   return (
     <div className="flex items-center justify-between gap-3 border-t border-sp-line-soft px-4 py-3 text-[13px] text-muted-foreground">
       <span>{text}</span>
       <div className="flex gap-1.5">
-        <Button variant="outline" size="sm" aria-disabled>Sebelumnya</Button>
-        <Button variant="outline" size="sm" onClick={onNext}>Berikutnya</Button>
+        <Button variant="outline" size="sm" aria-disabled={!canPrev} onClick={canPrev ? onPrev : undefined}>Sebelumnya</Button>
+        <Button variant="outline" size="sm" aria-disabled={!canNext} onClick={canNext ? onNext : undefined}>Berikutnya</Button>
       </div>
     </div>
   );
