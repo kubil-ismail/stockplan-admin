@@ -1,7 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useFormik } from "formik";
+import { adminLogin, adminLogout, adminMe, adminVerify } from "@/lib/admin-api";
+import { markSignedIn } from "@/lib/admin-session-flag";
+import { cleanCode, validateLogin, validateOtp, type LoginValues, type OtpValues } from "@/lib/admin-login";
 import { Check, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -13,8 +18,6 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
-
-const MAX_FAILS = 5;
 
 function ErrorAlert({ children }: { children: React.ReactNode }) {
   return (
@@ -40,70 +43,89 @@ const Heading = ({ title, sub }: { title: string; sub: string }) => (
   </div>
 );
 
-// shortcut: credential/OTP checks are client-side stubs mirroring the design (any password >= 10 chars,
-// any valid-format code except 000000); replace with /admin/api auth + server-side lockout before real use.
+const LOCKED_MSG = "Terlalu banyak percobaan. Akun dikunci 15 menit dan super admin sudah diberi tahu.";
+
 export function LoginForm() {
+  const router = useRouter();
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [email, setEmail] = useState("");
-  const [pw, setPw] = useState("");
   const [show, setShow] = useState(false);
-  const [fails, setFails] = useState(0);
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [otp, setOtp] = useState("");
-  const [err2, setErr2] = useState("");
+  const [locked, setLocked] = useState(false);
   const [backup, setBackup] = useState(false);
-  const [trust, setTrust] = useState(true);
 
-  const locked = fails >= MAX_FAILS;
-  const workEmail = /@stockplan\.id$/i.test(email.trim());
+  // Already signed in (and past 2FA)? Skip the form. A pending 2FA session makes /auth/me answer 401, so it stays here.
+  useEffect(() => {
+    let live = true;
+    void adminMe().then((r) => { if (live && r.ok) { markSignedIn(); router.replace("/admin"); } });
+    return () => { live = false; };
+  }, [router]);
 
-  const proceed = (next: 2 | 3) => {
-    setBusy(true);
-    setTimeout(() => { setBusy(false); setStep(next); setErr(""); }, 700);
-  };
+  // Both forms show one alert (design): a server message in `status`, else the first field error after a submit.
+  // Errors clear on the next keystroke, like the design. Validation only runs on submit.
+  const form1 = useFormik<LoginValues>({
+    initialValues: { email: "", password: "" },
+    validateOnChange: false,
+    validateOnBlur: false,
+    validate: validateLogin,
+    onSubmit: async (v, { setStatus, setFieldValue }) => {
+      if (locked) return;
+      const r = await adminLogin(v.email.trim(), v.password);
+      if (!r.ok) {
+        if (r.error.code === "ACCOUNT_LOCKED") { setLocked(true); return setStatus(undefined); }
+        return setStatus(r.error.fields?.email ?? r.error.fields?.password ?? r.error.message);
+      }
+      setStatus(undefined);
+      void setFieldValue("password", "");
+      if ("step" in r.data) setStep(2);
+      else { markSignedIn(); setStep(3); } // trusted device: the API already returned the admin, no 2FA needed
+    },
+  });
 
-  const submit1 = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (locked || busy) return;
-    if (!workEmail) return setErr("Gunakan email kerja @stockplan.id.");
-    if (pw.length < 10) {
-      const f = fails + 1;
-      setFails(f);
-      return setErr(f >= MAX_FAILS ? "" : `Email atau password salah. Sisa ${MAX_FAILS - f} percobaan sebelum akun dikunci.`);
-    }
-    proceed(2);
-  };
+  const form2 = useFormik<OtpValues>({
+    initialValues: { code: "", trust: true },
+    validateOnChange: false,
+    validateOnBlur: false,
+    validate: (v) => validateOtp(v, backup),
+    onSubmit: async (v, { setStatus, resetForm }) => {
+      const r = await adminVerify(v.code.trim(), backup ? "backup" : "totp", v.trust);
+      if (!r.ok) {
+        if (r.error.code === "ACCOUNT_LOCKED") { resetForm(); setStep(1); setLocked(true); return; }
+        return setStatus(r.error.fields?.code ?? r.error.message);
+      }
+      markSignedIn();
+      setStep(3);
+    },
+  });
 
-  const submit2 = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (busy) return;
-    const v = otp.trim();
-    const ok = backup ? /^[a-z0-9]{4}-[a-z0-9]{4}$/i.test(v) : /^\d{6}$/.test(v);
-    if (!ok) return setErr2(backup ? "Format kode cadangan: xxxx-xxxx." : "Kode harus 6 digit angka.");
-    if (!backup && v === "000000") return setErr2("Kode salah atau sudah kedaluwarsa. Coba kode terbaru.");
-    proceed(3);
-  };
+  const email = form1.values.email.trim();
+  const alert1 = locked ? LOCKED_MSG : (form1.status as string | undefined) ?? form1.errors.email ?? form1.errors.password;
+  const alert2 = (form2.status as string | undefined) ?? form2.errors.code;
+  const touch1 = () => { if (form1.status) form1.setStatus(undefined); if (form1.errors.email || form1.errors.password) form1.setErrors({}); };
+  const touch2 = () => { if (form2.status) form2.setStatus(undefined); if (form2.errors.code) form2.setErrors({}); };
+  // One handler per field keeps the Formik value, the alert reset and any sanitising in the same place.
+  const on1 = (e: React.ChangeEvent<HTMLInputElement>) => { touch1(); form1.handleChange(e); };
+
+  // "Ganti akun": drop the half-open 2FA session on the server too (logout is idempotent for it).
+  const switchAccount = async () => { await adminLogout(); form2.resetForm(); form1.setFieldValue("password", ""); setStep(1); };
 
   return (
     <Card role="main" aria-labelledby="h1" className="w-full max-w-[420px] rounded-2xl py-7 shadow-[0_20px_50px_-30px_rgba(0,0,0,.35)]">
       <CardContent className="px-7">
         {step === 1 && (
-          <form onSubmit={submit1} noValidate>
+          <form onSubmit={form1.handleSubmit} noValidate>
             <FieldGroup className="gap-[18px]">
               <Steps n={1} />
               <Heading title="Masuk ke panel admin" sub="Khusus tim StockPlan. Gunakan email kerja Anda." />
-              {(err || locked) && <ErrorAlert>{locked ? "Terlalu banyak percobaan. Akun dikunci 15 menit dan super admin sudah diberi tahu." : err}</ErrorAlert>}
+              {alert1 && <ErrorAlert>{alert1}</ErrorAlert>}
               <Field>
-                <FieldLabel htmlFor="em">Email kerja</FieldLabel>
-                <Input id="em" type="email" autoComplete="username" placeholder="nama@stockplan.id" value={email} aria-invalid={!!err && !workEmail}
-                  onChange={(e) => { setEmail(e.target.value); setErr(""); }} />
+                <FieldLabel htmlFor="email">Email kerja</FieldLabel>
+                <Input id="email" name="email" type="email" autoComplete="username" placeholder="nama@stockplan.id" value={form1.values.email} aria-invalid={!!form1.errors.email || undefined}
+                  onChange={on1} onBlur={form1.handleBlur} />
               </Field>
               <Field>
-                <FieldLabel htmlFor="pw">Password</FieldLabel>
+                <FieldLabel htmlFor="password">Password</FieldLabel>
                 <InputGroup>
-                  <InputGroupInput id="pw" type={show ? "text" : "password"} autoComplete="current-password" placeholder="Minimal 10 karakter" value={pw} aria-invalid={!!err && workEmail}
-                    onChange={(e) => { setPw(e.target.value); setErr(""); }} />
+                  <InputGroupInput id="password" name="password" type={show ? "text" : "password"} autoComplete="current-password" placeholder="Minimal 10 karakter" value={form1.values.password}
+                    aria-invalid={!!form1.errors.password || !!form1.status || undefined} onChange={on1} onBlur={form1.handleBlur} />
                   <InputGroupAddon align="inline-end">
                     <InputGroupButton size="sm" className="h-8 px-2.5 text-[13px] font-semibold text-sp-icon" onClick={() => setShow(!show)} aria-label={show ? "Sembunyikan password" : "Tampilkan password"}>
                       {show ? "Sembunyi" : "Lihat"}
@@ -111,9 +133,9 @@ export function LoginForm() {
                   </InputGroupAddon>
                 </InputGroup>
               </Field>
-              <Button type="submit" variant="secondary" size="lg" aria-disabled={locked} className="w-full">
-                {busy && <Spinner aria-hidden />}
-                {locked ? "Akun dikunci sementara" : busy ? "Memeriksa…" : "Lanjut"}
+              <Button type="submit" variant="secondary" size="lg" aria-disabled={locked} disabled={form1.isSubmitting} className="w-full">
+                {form1.isSubmitting && <Spinner aria-hidden />}
+                {locked ? "Akun dikunci sementara" : form1.isSubmitting ? "Memeriksa…" : "Lanjut"}
               </Button>
               <FieldDescription className="text-[13px]">Lupa password? Admin tidak bisa mengatur ulang sendiri. Minta super admin mengirim tautan atur ulang.</FieldDescription>
             </FieldGroup>
@@ -121,30 +143,30 @@ export function LoginForm() {
         )}
 
         {step === 2 && (
-          <form onSubmit={submit2} noValidate>
+          <form onSubmit={form2.handleSubmit} noValidate>
             <FieldGroup className="gap-[18px]">
               <Steps n={2} />
               <Heading title="Verifikasi dua langkah" sub="Masukkan 6 digit kode dari aplikasi autentikator Anda." />
               <div className="flex items-center gap-2.5 rounded-[10px] border border-border px-2.5 py-2 text-[13.5px]">
-                <Avatar aria-hidden className="size-[30px]"><AvatarFallback className="bg-foreground text-xs font-semibold text-primary">{email.trim()[0]?.toUpperCase()}</AvatarFallback></Avatar>
+                <Avatar aria-hidden className="size-[30px]"><AvatarFallback className="bg-foreground text-xs font-semibold text-primary">{email[0]?.toUpperCase()}</AvatarFallback></Avatar>
                 <b className="min-w-0 truncate font-semibold">{email}</b>
-                <Button type="button" variant="link" className="ml-auto h-auto px-0 text-[13px]" onClick={() => { setStep(1); setOtp(""); setErr2(""); setPw(""); }}>Ganti akun</Button>
+                <Button type="button" variant="link" className="ml-auto h-auto px-0 text-[13px]" onClick={() => void switchAccount()}>Ganti akun</Button>
               </div>
-              {err2 && <ErrorAlert>{err2}</ErrorAlert>}
+              {alert2 && <ErrorAlert>{alert2}</ErrorAlert>}
               <Field>
-                <FieldLabel htmlFor="otp">{backup ? "Kode cadangan" : "Kode verifikasi"}</FieldLabel>
-                <Input id="otp" inputMode={backup ? "text" : "numeric"} autoComplete="one-time-code" value={otp} aria-invalid={!!err2}
-                  placeholder={backup ? "xxxx-xxxx" : "000000"}
-                  onChange={(e) => { setOtp(backup ? e.target.value.slice(0, 9) : e.target.value.replace(/\D/g, "").slice(0, 6)); setErr2(""); }}
+                <FieldLabel htmlFor="code">{backup ? "Kode cadangan" : "Kode verifikasi"}</FieldLabel>
+                <Input id="code" name="code" inputMode={backup ? "text" : "numeric"} autoComplete="one-time-code" value={form2.values.code} aria-invalid={!!form2.errors.code || !!form2.status || undefined}
+                  placeholder={backup ? "xxxx-xxxx" : "000000"} onBlur={form2.handleBlur}
+                  onChange={(e) => { touch2(); void form2.setFieldValue("code", cleanCode(e.target.value, backup), false); }}
                   className={backup ? "" : "h-14 pr-0 pl-[.5em] text-center font-mono text-[26px] tracking-[.5em]"} />
               </Field>
               <Field orientation="horizontal">
-                <Checkbox id="trust" checked={trust} onCheckedChange={(v) => setTrust(v === true)} />
+                <Checkbox id="trust" name="trust" checked={form2.values.trust} onCheckedChange={(v) => void form2.setFieldValue("trust", v === true)} />
                 <FieldLabel htmlFor="trust" className="font-normal text-sp-ink-2">Percayai perangkat ini selama 7 hari</FieldLabel>
               </Field>
-              <Button type="submit" variant="secondary" size="lg" className="w-full">{busy && <Spinner aria-hidden />}Verifikasi &amp; masuk</Button>
+              <Button type="submit" variant="secondary" size="lg" disabled={form2.isSubmitting} className="w-full">{form2.isSubmitting && <Spinner aria-hidden />}Verifikasi &amp; masuk</Button>
               <div className="flex items-center justify-between gap-2.5">
-                <Button type="button" variant="link" className="h-auto px-0 text-[13.5px]" onClick={() => { setBackup(!backup); setOtp(""); setErr2(""); }}>
+                <Button type="button" variant="link" className="h-auto px-0 text-[13.5px]" onClick={() => { setBackup(!backup); form2.resetForm({ values: { code: "", trust: form2.values.trust } }); }}>
                   {backup ? "Pakai aplikasi autentikator" : "Pakai kode cadangan"}
                 </Button>
                 <FieldDescription className="w-auto text-[13px]">Kode berganti tiap 30 detik</FieldDescription>

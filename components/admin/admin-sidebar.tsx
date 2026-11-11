@@ -11,6 +11,7 @@ import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuBadge, SidebarMenuButton, SidebarMenuItem, useSidebar,
 } from "@/components/ui/sidebar";
 import { LogoMark } from "./logo-mark";
+import { useAdmin } from "./session";
 
 type Item = { href: string; label: string; icon: LucideIcon; badge?: number };
 
@@ -46,6 +47,7 @@ export function AdminSidebar() {
   const pathname = usePathname();
   const isActive = (href: string) => (href === "/admin" ? pathname === href : pathname === href || pathname.startsWith(href + "/"));
   const { setOpenMobile } = useSidebar();
+  const { logout } = useAdmin();
   const close = () => setOpenMobile(false);
 
   return (
@@ -78,7 +80,7 @@ export function AdminSidebar() {
       <SidebarFooter className="px-3 pb-4">
         <SidebarMenu className="gap-0.5">
           <SidebarMenuItem><SidebarMenuButton className="rounded-lg" render={<Link href="/beranda" onClick={close} />}><ExternalLink aria-hidden strokeWidth={1.8} /><span>Buka aplikasi</span></SidebarMenuButton></SidebarMenuItem>
-          <SidebarMenuItem><SidebarMenuButton className="rounded-lg" render={<Link href="/admin/masuk" onClick={close} />}><LogOut aria-hidden strokeWidth={1.8} /><span>Keluar</span></SidebarMenuButton></SidebarMenuItem>
+          <SidebarMenuItem><SidebarMenuButton className="rounded-lg" onClick={() => { close(); void logout(); }}><LogOut aria-hidden strokeWidth={1.8} /><span>Keluar</span></SidebarMenuButton></SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
     </Sidebar>

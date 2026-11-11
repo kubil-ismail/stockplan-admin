@@ -48,7 +48,7 @@ public/logos/emiten/  logo emiten (disajikan statis)
 
 ## 3. Konvensi (wajib diikuti)
 
-- **Nama tabel**: `<domain>_<jamak>` snake_case, set lewat `tableName` di model. Nama kolom tetap camelCase (default Sequelize). Domain yang sudah dipakai: `auth_`, `theme_`, `market_`, `watchlist_`. Rencana: `thesis_`, `portfolio_`, `notification_`, `support_` (tiket), `admin_`.
+- **Nama tabel**: `<domain>_<jamak>` snake_case, set lewat `tableName` di model. Nama kolom tetap camelCase (default Sequelize). Domain yang sudah dipakai: `auth_`, `theme_`, `market_`, `watchlist_`, `admin_`. Rencana: `thesis_`, `portfolio_`, `notification_`, `support_` (tiket).
 - **Migrasi**: satu perubahan = satu file baru `YYYYMMDDHHMMSS-…js`. Enum Postgres ikut di-drop di `down`.
 - **Validasi** di `lib/<modul>.js`: fungsi `validateX(body)` → `{ values, errors }` (`errors` = `null` atau `{ field: pesan }`). Update parsial: hanya field yang dikirim yang divalidasi dan diubah.
 - **Error**: pakai `fail(res, status, code, message, fields)` dari `lib/http.js`. Kode yang dipakai: `VALIDATION` (422), `UNAUTHENTICATED` (401), `NOT_FOUND` (404), `EMAIL_TAKEN` (409), `BAD_CREDENTIALS` (401), `EMAIL_UNCONFIRMED` (403), `BAD_TOKEN` (400), `CURRENT_SESSION` (400), `NOT_IPO` (422), `BAD_REQUEST`/`SERVER_ERROR` (handler global di `app.js`).
@@ -66,6 +66,7 @@ public/logos/emiten/  logo emiten (disajikan statis)
 - Cookie `sid` httpOnly, `SameSite=Lax`, `Secure` di production. Token acak 32 byte; yang disimpan hanya SHA-256-nya (`auth_sessions.tokenHash`).
 - Login: "Ingat saya" (`remember`, default `true`) → sesi 30 hari + cookie persisten; `false` → 24 jam + cookie sesi browser.
 - `middleware/requireAuth.js` mengisi `req.user` dan `req.session`, menolak sesi kedaluwarsa, dan memperbarui `updatedAt` sesi paling sering sekali per menit (dipakai sebagai "aktif terakhir").
+- Admin memakai tabel, sesi, dan cookie sendiri; sesi customer tidak bisa masuk `/admin/api` dan sebaliknya.
 - Login gagal memakai hash dummy supaya waktu respons tidak membocorkan email terdaftar.
 - Ganti password → semua sesi lain dihapus, sesi saat ini tetap.
 - Aturan password: daftar = min 8 + huruf besar + angka; ganti password = min 8 + huruf + angka (mengikuti design apa adanya; **belum diputuskan** apakah disamakan).
@@ -89,10 +90,38 @@ Semua butuh cookie `sid` kecuali yang ditandai *publik*. Detail skema ada di Swa
 | `GET /me/sessions`, `DELETE /me/sessions/:id` | Profil | tidak bisa menghapus sesi saat ini (pakai logout) |
 | `GET /sectors` | Tema | + `industryNames` untuk kotak cari |
 | `GET /sectors/:slug` | TemaSektor | subsektor → industri, `notice` untuk banner "Data baru" |
-| `GET /companies?q=&sector=` | EmitenSearch | urutan "Paling cocok" sesuai design, chip sektor |
+| `GET /companies?q=&sector=` | EmitenSearch | urutan "Paling cocok" sesuai design, chip sektor; tanpa `q` + `sector` = jelajah satu sektor; per baris `themes` (Tema terkait) + `inWatchlist` |
 | `GET /companies/:ticker` | Emiten, EmitenIPO, EmitenDataTertunda | + `themes` (badge tahap), `peers` ("Satu tahap"), `viewer` (status tombol) |
 | `PUT\|DELETE /companies/:ticker/alerts/:kind` | EmitenIPO, EmitenDataTertunda | `listing` (hanya status ipo), `data-update` |
-| `POST /watchlist`, `DELETE /watchlist/:ticker` | tombol watchlist | idempoten; daftar watchlist belum ada |
+| `GET /themes/:slug` | TemaDetail, TemaDetailTabel, panel emiten | hanya tema `published`; isi drawer dari `profile.highlights`; `viewer.watchlist` |
+| `GET /watchlist` | Watchlist | + data emiten dan tema/tahap utama per item |
+| `POST /watchlist`, `DELETE /watchlist/:ticker` | tombol watchlist | idempoten |
+| `PATCH /watchlist/:ticker` | Watchlist | catatan dan/atau checklist; memperbarui `touchedAt` |
+
+**Admin** (`/admin/api`, cookie terpisah `asid` path `/admin/api`; detail di Swagger tag *Admin: Auth*):
+
+| Endpoint | Halaman design | Catatan |
+| --- | --- | --- |
+| `POST /admin/api/auth/login` *publik* | AdminLogin | Email `@stockplan.id`. Berhasil → `{ step: 'two_factor' }` + cookie `asid` sementara 5 menit; perangkat tepercaya (`atd`) langsung dapat `{ admin }` |
+| `POST /admin/api/auth/verify` | AdminLogin2FA | `{ code, method: totp\|backup, trustDevice }`. Token sesi diganti setelah 2FA |
+| `POST /admin/api/auth/logout` | menu akun, "Ganti akun" | Idempoten, juga untuk sesi yang belum lewat 2FA |
+| `GET /admin/api/auth/me` | shell admin | `{ admin: { id, name, email, role } }` |
+
+**Admin: Data emiten** (`/admin/api/companies`, perlu sesi admin + izin modul `em` dari `lib/adminRoles.js`):
+
+| Endpoint | Izin | Halaman design | Catatan |
+| --- | --- | --- | --- |
+| `GET /admin/api/companies?q=&tab=&sector=&page=&pageSize=` | `em:view` | AdminEmiten | Tab: `all`/`review`/`incomplete`/`ready` (hitungan mengikuti q + sektor); kelengkapan 5 bagian; `reportCount` selalu 0 |
+| `GET /admin/api/companies/export.csv?tickers=` | `em:view` | AdminEmiten | Semua, atau hanya yang dipilih |
+| `POST /admin/api/companies/bulk-review` | `em:edit` | AdminEmiten | `{ tickers }` 1–200 → status "Perlu ditinjau" |
+| `POST /admin/api/companies` | `em:edit` | AdminEmitenIPO | Buat emiten IPO sebagai draf; wajib `ticker` + `name`; 409 `TICKER_TAKEN` |
+| `GET /admin/api/companies/:ticker` | `em:view` | AdminEmitenEdit, AdminEmitenIPO | `form` + `sections` (kelengkapan) + `canPublish` + `themes` (hanya baca) |
+| `PATCH /admin/api/companies/:ticker` | `em:edit` | keduanya | Simpan draf; hanya bagian yang dikirim diganti |
+| `POST /admin/api/companies/:ticker/publish` | `em:publish` | keduanya | Draf → data yang dilihat customer; 422 `INCOMPLETE` bila ada bagian belum lengkap |
+
+Alur draf/terbit: `market_companies.draft` (JSONB) menampung form yang belum terbit; `publishStatus` = `draft`/`review`/`published`; `publishedAt` NULL = belum pernah terbit dan **disembunyikan dari endpoint customer** (`GET /companies`, `/companies/:ticker`, peers, hitungan sektor, tambah watchlist). Data seed otomatis `published` lewat default DB. Form ↔ kolom dipetakan di `lib/adminCompanies.js` (`columnsToForm`/`formToColumns`); isi editorial tambahan disimpan di `profile` (`revenueSources`, `keyTips`, `trading`, `overviewSource`, `asOfSource`, `subsector`). Status "IPO baru" dihitung: `status=ipo` dan `publishStatus=draft`. Ticker tidak bisa diubah setelah dibuat (kunci utama dipakai watchlist/tema).
+
+Aturan: 5 kegagalan (password atau kode 2FA) per email dalam 15 menit → 429 `ACCOUNT_LOCKED` 15 menit (dihitung dari `admin_audit_logs`, jadi email tak dikenal berperilaku sama); sesi berakhir 30 menit tanpa aktivitas; perangkat tepercaya 7 hari; kode cadangan sekali pakai. Middleware: `requireAdmin` (sudah lewat 2FA) dan `requireAdmin.pending` (baru langkah 1). Seeder admin dev: `admin@stockplan.id` / `StockPlanDev2026`, TOTP secret dan kode cadangan dicetak seeder (`npx sequelize-cli db:seed --seed 20261111000001-admin-users.js`).
 
 Penyimpangan dari §9 handoff design (disengaja):
 - `GET /sectors/:slug` mengganti `GET /sectors/:id/themes` (satu panggilan berisi seluruh halaman).
@@ -110,6 +139,7 @@ Penyimpangan dari §9 handoff design (disengaja):
 | `theme_sectors` → `theme_subsectors` → `theme_industries` | hierarki IDX-IC. Industri: `dataStatus` (`soon`/`ready`), `dataUpdatedAt`, `updateNote`, `themeSlug` |
 | `theme_themes`, `theme_stages` | tema rantai nilai; `theme_stages.tickers` = array JSONB berurutan (indeks GIN). Satu emiten boleh di beberapa tahap |
 | `market_companies` | emiten. Kolom untuk query/sort; isi editorial halaman di `profile` (JSONB) dan `ipo` (JSONB). `dataDelayed` JSONB → banner data tertunda |
+| `admin_users`, `admin_sessions`, `admin_trusted_devices`, `admin_audit_logs` | akun admin (`role` = id peran: super/data/tema/support/view, TOTP + kode cadangan ter-hash), sesi (`verified` = lewat 2FA), perangkat tepercaya, log percobaan masuk (fondasi Riwayat perubahan; bukan milik user customer, tanpa cascade dari `auth_users`) |
 | `watchlist_items` | per user × ticker, `checklist` 4 boolean, `note` |
 | `market_company_alerts` | per user × ticker × `listing`/`data_update` |
 
@@ -122,6 +152,7 @@ Urutan file penting (`db:seed:all` berjalan sesuai nama file):
 1. `…01-theme-sectors.js` — 11 sektor dari board `Tema`; subsektor/industri **hanya Energi** dari board `TemaSektor`. Tanggal Batu Bara dibuat relatif (kemarin) supaya status "Baru" terlihat.
 2. `…02-market-companies.js` — 35 emiten dari array data board `EmitenSearch` (`seeders/data/companies-search.json`) + ABNU (contoh IPO fiktif). Detail halaman lengkap hanya **BUMI** dan **ABNU** (`seeders/data/companies-detail.js`). Market cap hanya untuk 5 emiten yang angkanya ada di design.
 3. `…03-theme-batubara.js` — tema Batubara dari `fixtures/theme-batubara.json` (5 tahap, 21 emiten) + 14 emiten tambahan dari fixture.
+4. `…04-theme-batubara-highlights.js` — isi editorial TemaDetail: `tagline` (Pembeda utama), market cap per 16 Okt 2026, dan `profile.highlights` (angka kunci, insight, komposisi pendapatan, anak usaha) untuk drawer. Hanya mengisi kolom yang kosong. Di DB yang sudah ter-seed: `npx sequelize-cli db:seed --seed 20261110000004-theme-batubara-highlights.js`.
 
 Catatan:
 - `sequelize-cli` tidak mencatat seed yang sudah jalan. Menjalankan ulang `db:seed:all` akan gagal karena slug/ticker unik. Untuk reset: `npx sequelize-cli db:seed:undo:all && npx sequelize-cli db:seed:all`.
@@ -136,6 +167,14 @@ Catatan:
 | `controllers/sectorController.js` | Memuat field ringan semua emiten untuk menghitung jumlah per sektor/industri | Kalau emiten > beberapa ribu: ganti ke `COUNT … GROUP BY` |
 | `controllers/companyController.js` | "Satu tahap" fallback ke industri yang sama kalau emiten belum masuk tema | Hapus fallback kalau semua emiten sudah dipetakan ke tema |
 | Login | Belum ada rate limit / lockout untuk customer | Sebelum go-live |
+| `admin_users.totpSecret` | TOTP secret disimpan polos | Enkripsi AES-GCM (kunci dari env) sebelum production |
+| `market_companies` (admin list) | Daftar admin memuat semua emiten + `profile` lalu menghitung kelengkapan/tab di JS | Kalau lambat: simpan kolom kelengkapan, filter di SQL |
+| Admin emiten: file | Logo, laporan keuangan (XBRL/PDF), dan prospektus IPO belum ada (belum ada penyimpanan file); bagiannya tidak ikut cek kelengkapan | Saat modul upload (bersama `reports[].url`, `ipo.documents[].url`) |
+| Admin emiten: `reportCount`/`reports` | Selalu 0/kosong, belum ada modul Masukan | Saat modul Masukan & laporan |
+| Admin emiten: `ipo.settings` | `showUpcoming`/`autoConvert` hanya disimpan, belum dibaca | Saat daftar IPO customer / otomatisasi pindah ke tercatat |
+| Admin emiten: sub-sektor | Teks bebas; terhubung ke `industryId` hanya bila namanya cocok dengan `theme_industries` (data hanya Energi), selain itu tersimpan di `profile.subsector` | Saat data IDX-IC 10 sektor lain masuk |
+| Admin: akun dikunci | "Super admin diberi tahu" hanya tercatat di audit log + `console.warn` | Saat ada notifikasi admin |
+| Admin: pembuatan akun & aktivasi 2FA | Belum ada endpoint; akun admin hanya dari seeder dev (alur aktivasi belum didesain, handoff design §12) | Modul Akses (undang anggota) |
 | `/docs` | Swagger terbuka untuk publik | Batasi/matikan di production |
 | `market_companies.profile.reports[].url`, `ipo.documents[].url` | Selalu `null`; belum ada penyimpanan file | Saat modul upload/admin |
 | `theme_stages.groupKey` | Teks `hulu`/`tengah`/`hilir`; ikon & warna tahap utama (AdminTemaEdit) belum ada | Saat modul admin tema: tabel `theme_stage_groups` |
@@ -145,13 +184,12 @@ Catatan:
 Urutan yang disarankan, dimulai dari yang paling sedikit ketergantungannya.
 
 ### 8.1 Tema bisnis & emiten (melanjutkan yang ada)
-1. **`GET /themes/:slug`** — halaman `TemaDetail` (+ data `TemaDetailTabel` dan panel emiten di tema). Tabel dan seed sudah ada. Badge angka biru = emiten di > 1 tahap. Hanya tema `published` yang tampil.
-2. **Tema terkait + `inWatchlist` per baris** di `GET /companies?q=` (board `EmitenSearch`).
-3. **`GET /search?q=`** gabungan emiten + tema untuk ⌘K (`LayoutCari`) + **riwayat pencarian** per user (tampil, hapus per item, "Hapus riwayat").
-4. **"Kabari saya"** untuk industri "Segera hadir" (`TemaSektor`).
+1. ~~`GET /themes/:slug`~~ dan ~~Tema terkait + `inWatchlist`~~ di `GET /companies` — selesai (§5).
+2. **`GET /search?q=`** gabungan emiten + tema untuk ⌘K (`LayoutCari`) + **riwayat pencarian** per user (tampil, hapus per item, "Hapus riwayat").
+3. **"Kabari saya"** untuk industri "Segera hadir" (`TemaSektor`).
 
 ### 8.2 Modul lain (lihat handoff design §6 dan §9)
-- **Watchlist**: `GET /watchlist`, `PATCH /watchlist/:ticker` (catatan, checklist). Tabel sudah ada.
+- **Watchlist — sisa**: "Perubahan bisnis" per emiten (feed keterbukaan BEI) belum ada; client menampilkan kosong.
 - **Tesis**: daftar, wizard 5 langkah (draf), arsip/pulihkan, evaluasi + `suggestVerdict`/`evalTier` (rumus di handoff design §6.4). Membuka "Hubungkan ke tesis", "Buat tesis dari tema ini", label "Di tesis Anda".
 - **Portofolio**: holdings, transaksi, dana tunai, riwayat keputusan (berbasis modal, bukan nilai pasar). Membuka "Ada emiten Anda", "Di portofolio".
 - **Beranda**: `GET /dashboard` (perlu tindakan, drift ±5 poin, IPO 14 hari, dll.).
@@ -159,7 +197,7 @@ Urutan yang disarankan, dimulai dari yang paling sedikit ketergantungannya.
 - **Bantuan & tiket**.
 - **Auth tambahan**: konfirmasi email daftar, kirim ulang, lupa/reset password, Google, upload foto profil.
 - **Ekspor CSV** (`GET /me/export.csv`) — design: tautan dikirim lewat email.
-- **Admin** (`/admin/api`, handoff design §8): login + 2FA, RBAC per endpoint, CRUD emiten & tema, sinkron BEI (mengisi `dataDelayed`), riwayat/audit log. Saat ini semua data referensi hanya dari seed.
+- **Admin** (`/admin/api`, handoff design §8): ~~login + 2FA~~ dan ~~Data emiten (daftar, edit, tambah IPO)~~ selesai (§5); sisanya RBAC kustom (peran sekarang statis), tema, sinkron BEI (mengisi `dataDelayed`), riwayat/audit log. Saat ini semua data referensi hanya dari seed.
 
 ### 8.3 Keputusan yang masih terbuka
 - Samakan aturan password daftar vs ganti password?

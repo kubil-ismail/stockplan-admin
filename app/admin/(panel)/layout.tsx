@@ -2,11 +2,13 @@ import { Suspense } from "react";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin/admin-header";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
+import { AdminSession } from "@/components/admin/session";
 
 // usePathname() is runtime data on dynamic routes (/admin/emiten/[kode]), so both users sit in Suspense;
 // the fallbacks keep the sidebar width / header height so nothing jumps.
 export default function AdminPanelLayout({ children }: { children: React.ReactNode }) {
   return (
+    <AdminSession>
     <SidebarProvider className="text-[15px]">
       <Suspense fallback={<div aria-hidden className="hidden w-(--sidebar-width) flex-none border-r border-border bg-sidebar md:block" />}>
         <AdminSidebar />
@@ -18,5 +20,6 @@ export default function AdminPanelLayout({ children }: { children: React.ReactNo
         <div className="flex-1 px-4 pt-6 pb-12 md:px-7">{children}</div>
       </SidebarInset>
     </SidebarProvider>
+    </AdminSession>
   );
 }

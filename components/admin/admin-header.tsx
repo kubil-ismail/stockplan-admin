@@ -5,13 +5,14 @@ import { usePathname } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { SidebarTrigger } from "@/components/ui/sidebar";
+import { ROLES } from "@/lib/permissions";
 import { ADMIN_NAV } from "./admin-sidebar";
-
-// shortcut: signed-in user is a placeholder from the design; read it from the admin session once auth is real.
-const USER = { name: "Rina Putri", role: "Admin data" };
+import { useAdmin } from "./session";
 
 export function AdminHeader() {
   const pathname = usePathname();
+  const { admin } = useAdmin();
+  const roleName = ROLES.find((r) => r.id === admin.role)?.name ?? admin.role;
   const items = ADMIN_NAV.flatMap((g) => g.items);
   // longest matching nav entry, so /admin/emiten/BUMI still reads "Data emiten"
   const current = items.filter((i) => i.href !== "/admin" && (pathname === i.href || pathname.startsWith(i.href + "/"))).at(-1);
@@ -28,11 +29,11 @@ export function AdminHeader() {
       </Breadcrumb>
       <div className="ml-auto flex items-center gap-2.5 leading-tight">
         <Avatar aria-hidden className="size-9">
-          <AvatarFallback className="bg-foreground text-[13px] font-semibold text-primary">{USER.name[0]}</AvatarFallback>
+          <AvatarFallback className="bg-foreground text-[13px] font-semibold text-primary">{admin.name[0]?.toUpperCase()}</AvatarFallback>
         </Avatar>
         <div className="hidden flex-col sm:flex">
-          <b className="text-[13.5px]">{USER.name}</b>
-          <span className="text-xs text-muted-foreground">{USER.role}</span>
+          <b className="text-[13.5px]">{admin.name}</b>
+          <span className="text-xs text-muted-foreground">{roleName}</span>
         </div>
       </div>
     </header>
