@@ -1,15 +1,65 @@
 "use client";
 
 import { useState } from "react";
-import { Download, Lock, Undo2, Search } from "lucide-react";
+import { toast } from "sonner";
+import { Download, Lock, Undo2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { DAY_LABEL, EVENTS, filterEvents, MODULES, PEOPLE, revertEvent, type Ev, type Filters, type Kind } from "@/lib/riwayat";
-import { btn, cls, inp, useToast } from "./form-ui";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardFooter } from "@/components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Item, ItemActions, ItemContent, ItemMedia } from "@/components/ui/item";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { EmptyResult, FilterTabs, PageHeader, SearchInput, StatusBadge } from "./form-ui";
 
 const TABS: [Filters["tab"], string][] = [["all", "Semua"], ["data", "Perubahan data"], ["pub", "Terbit"], ["sec", "Akses & keamanan"]];
 const ME = "Rina"; // shortcut: signed-in admin placeholder; read from the admin session.
 
+function EventRow({ x, open, onOpen, reverted, onRevert }: { x: Ev; open: boolean; onOpen: (o: boolean) => void; reverted: boolean; onRevert: () => void }) {
+  const [name, color] = PEOPLE[x.who] ?? [x.who, "#1C1917"];
+  const sys = x.who === "Sistem";
+  return (
+    <Collapsible open={open && x.diff.length > 0} onOpenChange={onOpen} render={<Item className="items-start rounded-none border-0 border-b border-sp-line-soft px-5 py-3.5 last:border-b-0" />}>
+      <ItemMedia>
+        <Avatar aria-hidden className="size-8"><AvatarFallback className={cn("text-[13px] font-semibold", sys ? "border border-border bg-muted text-sp-icon" : "text-primary")} style={sys ? undefined : { background: color }}>{sys ? "S" : name[0]}</AvatarFallback></Avatar>
+      </ItemMedia>
+      <ItemContent className="min-w-0 gap-1">
+        <div className="text-[14.5px] leading-snug"><b className="font-semibold">{name}</b> {x.verb} <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12.5px] font-semibold">{x.target}</code>{x.rest && ` ${x.rest}`}</div>
+        <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
+          <Badge variant={x.kind === "sec" ? "danger" : "neutral"} className="rounded">{x.mod}</Badge>
+          <span>{x.meta}</span>
+          {x.diff.length > 0 && <CollapsibleTrigger render={<Button variant="link" className="h-auto px-0 text-[12.5px]" />}>{open ? "Sembunyikan perubahan" : "Lihat perubahan"}</CollapsibleTrigger>}
+        </div>
+        <CollapsibleContent>
+          <Card size="sm" className="mt-1.5 gap-0 py-0 shadow-none">
+            <Table className="text-[13.5px]">
+              <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="h-8 w-[170px] text-[11px]">Bagian</TableHead><TableHead className="h-8 text-[11px]">Sebelum</TableHead><TableHead className="h-8 text-[11px]">Sesudah</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {x.diff.map(([k, a, b]) => (
+                  <TableRow key={k} className="hover:bg-transparent">
+                    <TableCell className="py-2">{k}</TableCell>
+                    <TableCell className="bg-(--sp-danger-bg) py-2 text-[#991B1B] line-through">{a}</TableCell>
+                    <TableCell className="bg-(--sp-success-bg) py-2 text-[#166534]">{b}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Card>
+        </CollapsibleContent>
+      </ItemContent>
+      <ItemActions className="flex-col items-end gap-2">
+        <time className="font-mono text-xs text-muted-foreground">{x.time}</time>
+        {x.revertable && !reverted && <Button variant="outline" size="sm" onClick={onRevert}><Undo2 aria-hidden />Kembalikan</Button>}
+        {reverted && <StatusBadge tone="neutral">Dikembalikan</StatusBadge>}
+      </ItemActions>
+    </Collapsible>
+  );
+}
+
 export function AuditLog() {
-  const { flash, toast } = useToast();
   const [q, setQ] = useState("");
   const [mod, setMod] = useState("");
   const [who, setWho] = useState("");
@@ -27,85 +77,37 @@ export function AuditLog() {
   const revert = (x: Ev) => {
     setReverted([...reverted, x.id]);
     setAdded([revertEvent(x, ME, `r${added.length + 1}`), ...added]);
-    flash("Dikembalikan ke nilai sebelumnya. Tercatat sebagai perubahan baru.");
+    toast("Dikembalikan ke nilai sebelumnya. Tercatat sebagai perubahan baru.");
   };
-  const reset = () => { setQ(""); setMod(""); setWho(""); setRange("30"); setTab("all"); };
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex max-w-3xl flex-col gap-1">
-          <h1 className="text-[26px] font-bold leading-tight tracking-tight">Riwayat perubahan</h1>
-          <p className="text-[#716A65]">Semua yang dilakukan admin dan sistem: perubahan data, terbit, akses, dan percobaan masuk. Tidak bisa diubah atau dihapus.</p>
-        </div>
-        <button type="button" className={cls(btn.base, btn.outline)} onClick={() => flash(`CSV riwayat ${range === "1" ? "hari ini" : `${range} hari terakhir`} sedang disiapkan`)}><Download aria-hidden size={16} strokeWidth={1.8} />Ekspor CSV</button>
-      </div>
+      <PageHeader title="Riwayat perubahan" desc="Semua yang dilakukan admin dan sistem: perubahan data, terbit, akses, dan percobaan masuk. Tidak bisa diubah atau dihapus."
+        actions={<Button variant="outline" onClick={() => toast(`CSV riwayat ${range === "1" ? "hari ini" : `${range} hari terakhir`} sedang disiapkan`)}><Download aria-hidden />Ekspor CSV</Button>} />
 
-      <section aria-label="Riwayat" className="min-w-0 overflow-hidden rounded-xl border border-[#E7E5E4] bg-white">
+      <Card aria-label="Riwayat" className="min-w-0 gap-0 py-0">
         <div className="flex flex-wrap items-center gap-3 p-4">
-          <div className="relative min-w-60 flex-1">
-            <Search aria-hidden size={16} className="absolute left-3 top-3.5 text-[#716A65]" />
-            <input type="search" placeholder="Cari emiten, tema, email, atau isi perubahan" aria-label="Cari riwayat" value={q} onChange={(e) => setQ(e.target.value)} className={cls(inp(), "!h-[42px] pl-9 text-sm")} />
-          </div>
-          <select aria-label="Modul" value={mod} onChange={(e) => setMod(e.target.value)} className={cls(inp(), "!h-[42px] w-[180px] text-sm")}><option value="">Semua modul</option>{MODULES.map((m) => <option key={m}>{m}</option>)}</select>
-          <select aria-label="Pelaku" value={who} onChange={(e) => setWho(e.target.value)} className={cls(inp(), "!h-[42px] w-[180px] text-sm")}><option value="">Semua pelaku</option>{Object.entries(PEOPLE).map(([k, [n]]) => <option key={k} value={k}>{k === "Sistem" ? "Sistem" : n}</option>)}</select>
-          <select aria-label="Rentang waktu" value={range} onChange={(e) => setRange(e.target.value as Filters["range"])} className={cls(inp(), "!h-[42px] w-[180px] text-sm")}><option value="7">7 hari terakhir</option><option value="1">Hari ini</option><option value="30">30 hari terakhir</option></select>
+          <SearchInput label="Cari riwayat" placeholder="Cari emiten, tema, email, atau isi perubahan" value={q} onChange={setQ} />
+          <NativeSelect size="sm" aria-label="Modul" value={mod} onChange={(e) => setMod(e.target.value)} className="w-[180px]"><NativeSelectOption value="">Semua modul</NativeSelectOption>{MODULES.map((m) => <NativeSelectOption key={m}>{m}</NativeSelectOption>)}</NativeSelect>
+          <NativeSelect size="sm" aria-label="Pelaku" value={who} onChange={(e) => setWho(e.target.value)} className="w-[180px]"><NativeSelectOption value="">Semua pelaku</NativeSelectOption>{Object.entries(PEOPLE).map(([k, [n]]) => <NativeSelectOption key={k} value={k}>{n}</NativeSelectOption>)}</NativeSelect>
+          <NativeSelect size="sm" aria-label="Rentang waktu" value={range} onChange={(e) => setRange(e.target.value as Filters["range"])} className="w-[180px]"><NativeSelectOption value="7">7 hari terakhir</NativeSelectOption><NativeSelectOption value="1">Hari ini</NativeSelectOption><NativeSelectOption value="30">30 hari terakhir</NativeSelectOption></NativeSelect>
         </div>
-        <div className="border-b border-t border-[#F0EEEC] px-4 py-3">
-          <div role="tablist" aria-label="Jenis" className="flex w-fit flex-wrap gap-1 rounded-[10px] bg-[#F5F5F4] p-[3px]">
-            {TABS.map(([k, l]) => (
-              <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={cls("inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[13.5px]", tab === k ? "bg-white font-semibold shadow-sm" : "font-medium text-[#57534E] hover:text-[#1C1917]")}>
-                {l}<small className="font-mono text-[11.5px] text-[#716A65]">{base.filter((x) => k === "all" || x.kind === (k as Kind)).length}</small>
-              </button>
-            ))}
-          </div>
+        <div className="border-y border-sp-line-soft px-4 py-3">
+          <FilterTabs label="Jenis" value={tab} onChange={setTab} tabs={TABS.map(([v, label]) => ({ v, label, n: base.filter((x) => v === "all" || x.kind === (v as Kind)).length }))} />
         </div>
 
         {days.length ? days.map((d) => (
-          <div key={d}>
-            <div className="border-b border-[#F0EEEC] bg-[#FAFAF9] px-5 py-2.5 text-xs font-semibold uppercase tracking-[.05em] text-[#716A65]">{DAY_LABEL[d]}</div>
-            {list.filter((x) => x.day === d).map((x) => {
-              const [name, color] = PEOPLE[x.who] ?? [x.who, "#1C1917"];
-              const sys = x.who === "Sistem", isOpen = !!open[x.id] && x.diff.length > 0, rv = reverted.includes(x.id);
-              return (
-                <div key={x.id} className="grid grid-cols-[32px_1fr_auto] gap-x-3.5 border-b border-[#F0EEEC] px-5 py-3.5 last:border-b-0">
-                  <span aria-hidden className={cls("inline-flex size-8 items-center justify-center rounded-full text-[13px] font-semibold", sys ? "border border-[#E7E5E4] bg-[#F5F5F4] text-[#57534E]" : "text-[#FEA722]")} style={sys ? undefined : { background: color }}>{sys ? "S" : name[0]}</span>
-                  <div className="min-w-0">
-                    <div className="text-[14.5px] leading-snug"><b className="font-semibold">{name}</b> {x.verb} <code className="rounded bg-[#F5F5F4] px-1.5 py-0.5 font-mono text-[12.5px] font-semibold">{x.target}</code>{x.rest && ` ${x.rest}`}</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-[#716A65]">
-                      <span className={cls("rounded px-1.5 font-semibold leading-5", x.kind === "sec" ? "bg-[#FEE2E2] text-[#B91C1C]" : "bg-[#F5F5F4] text-[#44403C]")}>{x.mod}</span>
-                      <span>{x.meta}</span>
-                      {x.diff.length > 0 && <button type="button" aria-expanded={isOpen} className="text-[12.5px] font-semibold text-[#1C1917] underline underline-offset-2" onClick={() => setOpen({ ...open, [x.id]: !open[x.id] })}>{isOpen ? "Sembunyikan perubahan" : "Lihat perubahan"}</button>}
-                    </div>
-                    {isOpen && (
-                      <div className="mt-2.5 overflow-hidden rounded-[10px] border border-[#E7E5E4] text-[13.5px]">
-                        <div className="grid grid-cols-[170px_1fr_1fr] bg-[#FAFAF9] text-[11px] font-semibold uppercase tracking-[.05em] text-[#716A65]">{["Bagian", "Sebelum", "Sesudah"].map((h) => <span key={h} className="px-3 py-2">{h}</span>)}</div>
-                        {x.diff.map(([k, a, b]) => (
-                          <div key={k} className="grid grid-cols-[170px_1fr_1fr] border-t border-[#F0EEEC]">
-                            <span className="px-3 py-2">{k}</span><span className="bg-[#FEF2F2] px-3 py-2 text-[#991B1B] line-through">{a}</span><span className="bg-[#F0FDF4] px-3 py-2 text-[#166534]">{b}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <time className="font-mono text-xs text-[#716A65]">{x.time}</time>
-                    {x.revertable && !rv && <button type="button" className={cls(btn.base, btn.outline, btn.small)} onClick={() => revert(x)}><Undo2 aria-hidden size={14} />Kembalikan</button>}
-                    {rv && <span className="rounded-full bg-[#F5F5F4] px-2 text-xs font-semibold leading-[22px] text-[#57534E]">Dikembalikan</span>}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <section key={d} aria-label={DAY_LABEL[d]}>
+            <h2 className="border-b border-sp-line-soft bg-accent px-5 py-2.5 text-xs font-semibold tracking-[.05em] text-muted-foreground uppercase">{DAY_LABEL[d]}</h2>
+            {list.filter((x) => x.day === d).map((x) => (
+              <EventRow key={x.id} x={x} open={!!open[x.id]} onOpen={(o) => setOpen({ ...open, [x.id]: o })} reverted={reverted.includes(x.id)} onRevert={() => revert(x)} />
+            ))}
+          </section>
         )) : (
-          <div className="flex flex-col items-center gap-1.5 px-5 py-10 text-center">
-            <b className="text-[15px]">Tidak ada riwayat yang cocok</b><span className="text-[13.5px] text-[#716A65]">Coba kata lain atau perluas rentang waktu.</span>
-            <button type="button" className={cls(btn.base, btn.outline, btn.small, "mt-2")} onClick={reset}>Hapus semua filter</button>
-          </div>
+          <EmptyResult title="Tidak ada riwayat yang cocok" desc="Coba kata lain atau perluas rentang waktu." onReset={() => { setQ(""); setMod(""); setWho(""); setRange("30"); setTab("all"); }} />
         )}
-        <div className="flex items-center gap-2 border-t border-[#F0EEEC] bg-[#FAFAF9] px-5 py-3 text-[12.5px] text-[#716A65]"><Lock aria-hidden size={13} className="flex-none" />Riwayat disimpan 2 tahun. “Kembalikan” membuat perubahan baru yang tercatat di sini; riwayat aslinya tidak dihapus.</div>
-      </section>
-      {toast}
+        <CardFooter className="gap-2 text-[12.5px]"><Lock aria-hidden className="size-3.5 flex-none" />Riwayat disimpan 2 tahun. “Kembalikan” membuat perubahan baru yang tercatat di sini; riwayat aslinya tidak dihapus.</CardFooter>
+      </Card>
     </div>
   );
 }

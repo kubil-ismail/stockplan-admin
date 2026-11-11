@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ADMIN_NAV } from "./admin-sidebar";
 
 // shortcut: signed-in user is a placeholder from the design; read it from the admin session once auth is real.
@@ -14,19 +17,22 @@ export function AdminHeader() {
   const current = items.filter((i) => i.href !== "/admin" && (pathname === i.href || pathname.startsWith(i.href + "/"))).at(-1);
 
   return (
-    <header className="flex items-center gap-3 border-b border-[#E7E5E4] bg-white px-7 py-3">
-      <nav aria-label="Breadcrumb" className="text-[13px] text-[#716A65]">
-        <Link href="/admin" className="hover:text-[#1C1917] hover:underline">Admin</Link>
-        {" / "}
-        <span className="text-[#1C1917]">{current?.label ?? "Dashboard"}</span>
-      </nav>
+    <header className="flex items-center gap-3 border-b border-border bg-background px-4 py-3 md:px-7">
+      <SidebarTrigger className="md:hidden" aria-label="Buka menu navigasi" />
+      <Breadcrumb>
+        <BreadcrumbList className="text-[13px]">
+          <BreadcrumbItem><BreadcrumbLink render={<Link href="/admin" />}>Admin</BreadcrumbLink></BreadcrumbItem>
+          <BreadcrumbSeparator>/</BreadcrumbSeparator>
+          <BreadcrumbItem><BreadcrumbPage>{current?.label ?? "Dashboard"}</BreadcrumbPage></BreadcrumbItem>
+        </BreadcrumbList>
+      </Breadcrumb>
       <div className="ml-auto flex items-center gap-2.5 leading-tight">
-        <span aria-hidden className="inline-flex size-9 flex-none items-center justify-center rounded-full bg-[#1C1917] text-[13px] font-semibold text-[#FEA722]">
-          {USER.name[0]}
-        </span>
-        <div className="flex flex-col">
+        <Avatar aria-hidden className="size-9">
+          <AvatarFallback className="bg-foreground text-[13px] font-semibold text-primary">{USER.name[0]}</AvatarFallback>
+        </Avatar>
+        <div className="hidden flex-col sm:flex">
           <b className="text-[13.5px]">{USER.name}</b>
-          <span className="text-xs text-[#716A65]">{USER.role}</span>
+          <span className="text-xs text-muted-foreground">{USER.role}</span>
         </div>
       </div>
     </header>

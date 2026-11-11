@@ -5,13 +5,12 @@ export type Msg = { who: string; t: string; body: string; kind: "user" | "reply"
 export type Ticket = { id: string; k: Kind; s: TStatus; a: string; from: string; tk: string; page: string; subj: string; body: string; sent: string; age: string; late: number; votes?: number; dev: string; att: string; replies?: [string, string, string][]; notes?: [string, string, string][] };
 
 export const ME = "Rina";
-export const KIND: Record<Kind, [string, string]> = {
-  bug: ["Laporkan masalah", "bg-[#FEE2E2] text-[#B91C1C]"], data: ["Data salah", "bg-[#FEF3C7] text-[#92400E]"],
-  fit: ["Usulan fitur", "bg-[#EFF6FF] text-[#1D4ED8]"], etc: ["Lainnya", "bg-[#F5F5F4] text-[#57534E]"],
+// Second item = Badge variant (components/ui/badge.tsx).
+export const KIND: Record<Kind, [string, "danger" | "warning" | "info" | "neutral"]> = {
+  bug: ["Laporkan masalah", "danger"], data: ["Data salah", "warning"], fit: ["Usulan fitur", "info"], etc: ["Lainnya", "neutral"],
 };
-export const STATUS: Record<TStatus, [string, string]> = {
-  new: ["Baru", "bg-[#FEF3C7] text-[#92400E]"], prog: ["Ditangani", "bg-[#EFF6FF] text-[#1D4ED8]"], wait: ["Menunggu pengguna", "bg-[#F5F5F4] text-[#57534E]"],
-  done: ["Selesai", "bg-[#DCFCE7] text-[#166534]"], spam: ["Spam", "bg-[#FEE2E2] text-[#991B1B]"],
+export const STATUS: Record<TStatus, [string, "warning" | "info" | "neutral" | "success" | "danger"]> = {
+  new: ["Baru", "warning"], prog: ["Ditangani", "info"], wait: ["Menunggu pengguna", "neutral"], done: ["Selesai", "success"], spam: ["Spam", "danger"],
 };
 export const USERS: Record<string, [string, string]> = {
   "Andi Wijaya": ["andi.w@outlook.com", "#1D4ED8"], "Sari Kusuma": ["sari.k@gmail.com", "#92400E"], "Budi Santoso": ["budi@email.com", "#1C1917"],

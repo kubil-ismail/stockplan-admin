@@ -1,10 +1,12 @@
-import { EditorShell, Sk } from "./form-ui";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Skeleton as Sk } from "@/components/ui/skeleton";
+import { EditorShell } from "./form-ui";
 
-const Card = ({ children }: { children: React.ReactNode }) => (
-  <section className="flex flex-col gap-4 rounded-xl border border-[#E7E5E4] bg-white p-5">
-    <div className="flex flex-col gap-1.5"><Sk className="h-[18px] w-40" /><Sk className="h-[13px] w-[360px] max-w-full" /></div>
-    {children}
-  </section>
+const SkCard = ({ children }: { children: React.ReactNode }) => (
+  <Card>
+    <CardHeader className="gap-1.5"><Sk className="h-[18px] w-40" /><Sk className="h-[13px] w-[360px] max-w-full" /></CardHeader>
+    <CardContent className="flex flex-col gap-4">{children}</CardContent>
+  </Card>
 );
 
 /** Same shape as the emiten editors (header, TOC, cards, rail); shell stays visible while data loads. */
@@ -23,7 +25,7 @@ export function EditorSkeleton({ label, variant }: { label: string; variant: "ed
   return (
     <div aria-busy="true" aria-label={label} role="status">
       <EditorShell header={header} checks={[]} skeleton={toc.length}>
-        <Card>
+        <SkCard>
           <div className="flex flex-wrap gap-5">
             <div className="flex w-[132px] flex-col gap-2"><Sk className="size-24 rounded-full" /><Sk className="h-8 w-[100px] rounded-lg" /></div>
             <div className="flex min-w-[260px] flex-1 flex-col gap-3.5">
@@ -31,9 +33,9 @@ export function EditorSkeleton({ label, variant }: { label: string; variant: "ed
               <Sk className="h-9 w-72 rounded-[10px]" />
             </div>
           </div>
-        </Card>
-        <Card><div className="grid gap-3.5 sm:grid-cols-2">{Array.from({ length: 4 }, (_, i) => <div key={i} className="flex flex-col gap-2"><Sk className="h-[13px] w-[70px]" /><Sk className="h-5 w-24" /><Sk className="h-10 rounded-lg" /></div>)}</div></Card>
-        <Card><Sk className="h-10 rounded-lg" /><Sk className="h-[120px] rounded-lg" /></Card>
+        </SkCard>
+        <SkCard><div className="grid gap-3.5 sm:grid-cols-2">{Array.from({ length: 4 }, (_, i) => <div key={i} className="flex flex-col gap-2"><Sk className="h-[13px] w-[70px]" /><Sk className="h-5 w-24" /><Sk className="h-10 rounded-lg" /></div>)}</div></SkCard>
+        <SkCard><Sk className="h-10 rounded-lg" /><Sk className="h-[120px] rounded-lg" /></SkCard>
       </EditorShell>
     </div>
   );

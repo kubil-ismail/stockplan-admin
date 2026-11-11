@@ -2,12 +2,20 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Info } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
 import { existingCodes } from "@/lib/emiten-data";
 import { dec, fdShort, lembar, num, rp, scheduleError, stageIndex, type Dates } from "@/lib/ipo";
 import {
-  area, btn, Chip, cls, Counter, EditorShell, EntityAvatar, Err, Field, FileSlot, Help, inp, LinkBtn, LogoUpload, Note, RemoveBtn,
-  Section, SegCards, TONE, ToggleRow, useToast, type Check, type FileInfo,
+  AffixInput, ChoiceCards, Counter, EditorShell, EntityAvatar, Err, FileSlot, FormField, Help, LinkBtn, LogoUpload, Note, RemoveBtn,
+  Section, ShareBar, StatusBadge, ToggleRow, type Check, type FileInfo,
 } from "./form-ui";
 
 const SEKTOR = ["Energi", "Barang Baku", "Perindustrian", "Barang Konsumen Primer", "Barang Konsumen Non-Primer", "Kesehatan", "Keuangan", "Properti & Real Estat", "Teknologi", "Infrastruktur", "Transportasi & Logistik"];
@@ -31,7 +39,6 @@ const withId = <T extends object>(o: T) => ({ id: uid++, ...o });
 
 // shortcut: sample values from the design (ABNU); start empty and POST to /admin/api/companies once the API exists.
 export function IpoForm() {
-  const { flash, toast } = useToast();
   const [logo, setLogo] = useState("");
   const [name, setName] = useState("PT Andalan Baterai Nusantara Tbk");
   const [tk, setTk] = useState("ABNU");
@@ -93,42 +100,45 @@ export function IpoForm() {
 
   const patchList = (set: React.Dispatch<React.SetStateAction<Item[]>>, id: number, f: Partial<Item>) => set((l) => l.map((x) => (x.id === id ? { ...x, ...f } : x)));
   const setDate = (k: keyof Dates) => (e: React.ChangeEvent<HTMLInputElement>) => setDt({ ...dt, [k]: e.target.value });
-  const dateCls = (k: keyof Dates) => inp(!dt[k] && k === "ls");
 
   const header = (
     <div className="flex flex-wrap items-center gap-4">
       <EntityAvatar code={code || "IPO"} logo={logo} dark />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex flex-wrap items-center gap-2.5">
-          <h1 className="text-2xl font-bold leading-tight tracking-tight"><code className="mr-2 font-mono text-[22px]">{code || "····"}</code>{name.trim() || "Nama perusahaan"}</h1>
-          <Chip cls={TONE.info}>IPO baru</Chip>
-          <Chip cls={TONE.neutral}>{saved ? "Draf tersimpan" : "Belum disimpan"}</Chip>
+          <h1 className="text-2xl leading-tight font-bold tracking-tight"><code className="mr-2 font-mono text-[22px]">{code || "····"}</code>{name.trim() || "Nama perusahaan"}</h1>
+          <StatusBadge tone="info">IPO baru</StatusBadge>
+          <StatusBadge tone="neutral">{saved ? "Draf tersimpan" : "Belum disimpan"}</StatusBadge>
         </div>
-        <span className="text-sm text-[#716A65]">Belum tercatat di BEI. Harga dan data perdagangan baru ikut sinkron mulai tanggal pencatatan.</span>
+        <span className="text-sm text-muted-foreground">Belum tercatat di BEI. Harga dan data perdagangan baru ikut sinkron mulai tanggal pencatatan.</span>
       </div>
       <div className="flex items-center gap-2.5">
-        <Link href="/admin/emiten" className={cls(btn.base, btn.outline)}>Batal</Link>
-        <button type="button" className={cls(btn.base, btn.outline)} onClick={() => { if (tkErr || !name.trim()) return flash("Isi nama dan kode saham yang valid dulu"); setSaved(true); flash(`Draf ${code} tersimpan. Belum tampil di aplikasi.`); }}>Simpan draf</button>
+        <Link href="/admin/emiten" className={buttonVariants({ variant: "outline" })}>Batal</Link>
+        <Button variant="outline" onClick={() => { if (tkErr || !name.trim()) return toast("Isi nama dan kode saham yang valid dulu"); setSaved(true); toast(`Draf ${code} tersimpan. Belum tampil di aplikasi.`); }}>Simpan draf</Button>
         {canNext ? (
-          <Link href={`/admin/emiten/${code}`} className={cls(btn.base, btn.primary)}>Simpan &amp; lanjut isi profil</Link>
+          <Link href={`/admin/emiten/${code}`} className={buttonVariants()}>Simpan &amp; lanjut isi profil</Link>
         ) : (
-          <button type="button" aria-disabled className={cls(btn.base, btn.disabled)} onClick={() => flash(`Lengkapi dulu: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`)}>Simpan &amp; lanjut isi profil</button>
+          <Button aria-disabled onClick={() => toast(`Lengkapi dulu: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`)}>Simpan &amp; lanjut isi profil</Button>
         )}
       </div>
     </div>
   );
 
   const rail = (
-    <section className="flex flex-col gap-3 rounded-xl border border-[#E7E5E4] bg-white p-5">
-      <div className="flex flex-col gap-1"><b className="text-[15px] font-semibold">Pratinjau di aplikasi</b><span className="text-[13.5px] text-[#716A65]">Kartu di hasil pencarian</span></div>
-      <div className="flex flex-col gap-2 rounded-xl border border-[#E7E5E4] bg-[#FAFAF9] p-3.5">
-        <div className="flex items-center gap-2.5"><EntityAvatar code={code || "IPO"} logo={logo} size={32} /><div className="flex min-w-0 flex-col leading-tight"><code className="font-mono text-xs font-semibold">{code || "····"}</code><span className="truncate text-[13px]">{name.trim() || "Nama perusahaan"}</span></div></div>
-        <Chip cls={cls(TONE.info, "self-start")}>{dt.ls ? `Segera IPO · ${fdShort(dt.ls)}` : "Segera IPO"}</Chip>
-        <p className={cls("text-[13.5px] leading-snug", !shortSum.trim() && "text-[#A8A29E]")}>{shortSum.trim() || "Deskripsi singkat belum diisi"}</p>
-        <small className="text-xs text-[#716A65]">{sektor} · {sub.trim() || "subsektor"}</small>
-      </div>
-      {!soon && <Help>Tidak tampil di aplikasi sampai tanggal pencatatan.</Help>}
-    </section>
+    <Card>
+      <CardHeader><CardTitle>Pratinjau di aplikasi</CardTitle><CardDescription>Kartu di hasil pencarian</CardDescription></CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        <Card size="sm" className="bg-accent shadow-none">
+          <CardContent className="flex flex-col gap-2">
+            <div className="flex items-center gap-2.5"><EntityAvatar code={code || "IPO"} logo={logo} size={32} /><div className="flex min-w-0 flex-col leading-tight"><code className="font-mono text-xs font-semibold">{code || "····"}</code><span className="truncate text-[13px]">{name.trim() || "Nama perusahaan"}</span></div></div>
+            <StatusBadge tone="info" className="self-start">{dt.ls ? `Segera IPO · ${fdShort(dt.ls)}` : "Segera IPO"}</StatusBadge>
+            <p className={cn("text-[13.5px] leading-snug", !shortSum.trim() && "text-sp-faint")}>{shortSum.trim() || "Deskripsi singkat belum diisi"}</p>
+            <small className="text-xs text-muted-foreground">{sektor} · {sub.trim() || "subsektor"}</small>
+          </CardContent>
+        </Card>
+        {!soon && <Help>Tidak tampil di aplikasi sampai tanggal pencatatan.</Help>}
+      </CardContent>
+    </Card>
   );
 
   const jd: { label: string; help: string; a: keyof Dates; b?: keyof Dates; la: string; lb?: string }[] = [
@@ -146,46 +156,46 @@ export function IpoForm() {
           <LogoUpload code={code} logo={logo} onChange={setLogo} />
           <div className="flex min-w-[260px] flex-1 flex-col gap-3.5">
             <div className="grid gap-3.5 sm:grid-cols-[1fr_140px]">
-              <Field label="Nama perusahaan" htmlFor="i-nm"><input id="i-nm" className={inp(!name.trim())} value={name} onChange={(e) => setName(e.target.value)} placeholder="PT … Tbk" /></Field>
-              <Field label="Kode saham" htmlFor="i-tk"><input id="i-tk" className={cls(inp(!!tkErr), "font-mono")} value={tk} onChange={(e) => setTk(e.target.value.toUpperCase())} maxLength={4} autoComplete="off" placeholder="ABCD" /></Field>
+              <FormField label="Nama perusahaan" htmlFor="i-nm"><Input id="i-nm" aria-invalid={!name.trim()} value={name} onChange={(e) => setName(e.target.value)} placeholder="PT … Tbk" /></FormField>
+              <FormField label="Kode saham" htmlFor="i-tk"><Input id="i-tk" aria-invalid={!!tkErr} className="font-mono" value={tk} onChange={(e) => setTk(e.target.value.toUpperCase())} maxLength={4} autoComplete="off" placeholder="ABCD" /></FormField>
             </div>
             {tkErr && <Err>{tkErr}</Err>}
             <div className="grid gap-3.5 sm:grid-cols-2">
-              <Field label="Sektor IDX-IC" htmlFor="i-sk"><select id="i-sk" className={inp()} value={sektor} onChange={(e) => setSektor(e.target.value)}>{SEKTOR.map((s) => <option key={s}>{s}</option>)}</select></Field>
-              <Field label="Subsektor" htmlFor="i-ss"><input id="i-ss" className={inp(!sub.trim())} value={sub} onChange={(e) => setSub(e.target.value)} placeholder="mis. Batu bara" /></Field>
+              <FormField label="Sektor IDX-IC" htmlFor="i-sk"><NativeSelect id="i-sk" value={sektor} onChange={(e) => setSektor(e.target.value)}>{SEKTOR.map((s) => <NativeSelectOption key={s}>{s}</NativeSelectOption>)}</NativeSelect></FormField>
+              <FormField label="Subsektor" htmlFor="i-ss"><Input id="i-ss" aria-invalid={!sub.trim()} value={sub} onChange={(e) => setSub(e.target.value)} placeholder="mis. Batu bara" /></FormField>
             </div>
-            <Field label="Papan pencatatan"><SegCards label="Papan pencatatan" value={papan} onChange={setPapan} options={PAPAN} /></Field>
-            <Field label="Deskripsi singkat" hint="boleh menyusul — dipakai di kartu pencarian" htmlFor="i-sd">
-              <input id="i-sd" className={inp(shortSum.length > 100)} value={shortSum} onChange={(e) => setShortSum(e.target.value)} placeholder="mis. Pengolah nikel untuk bahan baku baterai" />
+            <FormField label="Papan pencatatan"><ChoiceCards label="Papan pencatatan" value={papan} onChange={setPapan} options={PAPAN} /></FormField>
+            <FormField label="Deskripsi singkat" hint="boleh menyusul — dipakai di kartu pencarian" htmlFor="i-sd">
+              <Input id="i-sd" aria-invalid={shortSum.length > 100} value={shortSum} onChange={(e) => setShortSum(e.target.value)} placeholder="mis. Pengolah nikel untuk bahan baku baterai" />
               <div className="flex justify-end"><Counter n={shortSum.length} max={100} /></div>
-            </Field>
-            <Field label="Deskripsi panjang" hint="boleh menyusul — jadi Ringkasan lengkap di halaman emiten" htmlFor="i-ld">
-              <textarea id="i-ld" className={cls(area(longSum.length > 400), "min-h-[168px]")} value={longSum} onChange={(e) => setLongSum(e.target.value)} placeholder="Bisnis apa, uangnya dari mana, dan apa yang menggerakkan kinerjanya. Dua sampai tiga kalimat bahasa sehari-hari." />
+            </FormField>
+            <FormField label="Deskripsi panjang" hint="boleh menyusul — jadi Ringkasan lengkap di halaman emiten" htmlFor="i-ld">
+              <Textarea id="i-ld" aria-invalid={longSum.length > 400} className="min-h-[168px]" value={longSum} onChange={(e) => setLongSum(e.target.value)} placeholder="Bisnis apa, uangnya dari mana, dan apa yang menggerakkan kinerjanya. Dua sampai tiga kalimat bahasa sehari-hari." />
               <div className="flex justify-between gap-3"><Help>Ambil dari bab Kegiatan Usaha di prospektus. Apit dengan **dua bintang** untuk menebalkan satu frasa.</Help><Counter n={longSum.length} max={400} /></div>
-            </Field>
+            </FormField>
           </div>
         </div>
       </Section>
 
-      <Section id="i-jadwal" title="Jadwal IPO" desc="Salin dari prospektus atau pengumuman BEI. Tahap aktif dihitung otomatis dari tanggal hari ini." aside={<Chip cls={TONE.warn}>{stageLabel}</Chip>}>
+      <Section id="i-jadwal" title="Jadwal IPO" desc="Salin dari prospektus atau pengumuman BEI. Tahap aktif dihitung otomatis dari tanggal hari ini." aside={<StatusBadge tone="warning">{stageLabel}</StatusBadge>}>
         <ol aria-label="Tahapan IPO" className="relative grid grid-cols-5 gap-1 py-1">
           {stages.map((s, i) => {
             const isDone = i < cur, isCur = i === cur;
             return (
               <li key={s[0]} className="flex flex-col items-center gap-1 text-center">
-                <i aria-hidden className={cls("inline-flex size-[18px] items-center justify-center rounded-full border-2 text-[10px] font-bold not-italic", isDone ? "border-[#1C1917] bg-[#1C1917] text-white" : isCur ? "border-[#FEA722] bg-[#FEA722]" : "border-[#D6D3D1] bg-white")}>{isDone ? "✓" : ""}</i>
-                <b className={cls("text-[12.5px]", isCur || isDone ? "font-semibold" : "font-medium text-[#716A65]")}>{s[0]}</b>
-                <small className="font-mono text-[11px] text-[#716A65]">{s[1] ? (s[2] && s[2] !== s[1] ? `${fdShort(s[1])}–${fdShort(s[2]).split(" ")[0]}` : fdShort(s[1])) : "belum diisi"}</small>
+                <i aria-hidden className={cn("inline-flex size-[18px] items-center justify-center rounded-full border-2 text-[10px] font-bold not-italic", isDone ? "border-foreground bg-foreground text-white" : isCur ? "border-primary bg-primary" : "border-input bg-background")}>{isDone ? "✓" : ""}</i>
+                <b className={cn("text-[12.5px]", isCur || isDone ? "font-semibold" : "font-medium text-muted-foreground")}>{s[0]}</b>
+                <small className="font-mono text-[11px] text-muted-foreground">{s[1] ? (s[2] && s[2] !== s[1] ? `${fdShort(s[1])}–${fdShort(s[2]).split(" ")[0]}` : fdShort(s[1])) : "belum diisi"}</small>
               </li>
             );
           })}
         </ol>
         <div>
           {jd.map((j) => (
-            <div key={j.a} className="grid items-center gap-3 border-t border-[#F0EEEC] py-3 first:border-t-0 sm:grid-cols-[1fr_150px_150px]">
-              <div className="flex flex-col"><b className="text-sm font-semibold">{j.label}</b><small className="text-[12.5px] text-[#716A65]">{j.help}</small></div>
-              <input type="date" aria-label={j.la} className={dateCls(j.a)} value={dt[j.a]} onChange={setDate(j.a)} />
-              {j.b ? <input type="date" aria-label={j.lb} className={dateCls(j.b)} value={dt[j.b]} onChange={setDate(j.b)} /> : <span className="hidden text-center text-[#A8A29E] sm:block">—</span>}
+            <div key={j.a} className="grid items-center gap-3 border-t border-sp-line-soft py-3 first:border-t-0 sm:grid-cols-[1fr_160px_160px]">
+              <div className="flex flex-col"><b className="text-sm font-semibold">{j.label}</b><Help>{j.help}</Help></div>
+              <Input type="date" aria-label={j.la} aria-invalid={!dt[j.a] && j.a === "ls"} value={dt[j.a]} onChange={setDate(j.a)} />
+              {j.b ? <Input type="date" aria-label={j.lb} value={dt[j.b]} onChange={setDate(j.b)} /> : <span className="hidden text-center text-sp-faint sm:block">—</span>}
             </div>
           ))}
         </div>
@@ -195,77 +205,74 @@ export function IpoForm() {
       <Section id="i-tawar" title="Detail penawaran" desc="Rentang harga dari masa bookbuilding. Harga final diisi setelah pernyataan efektif OJK.">
         <div className="grid gap-3.5 sm:grid-cols-3">
           {([["Harga bawah", "i-pl", pLo, setPLo], ["Harga atas", "i-ph", pHi, setPHi], ["Harga final", "i-pf", pFin, setPFin]] as const).map(([l, id, v, set]) => (
-            <Field key={id} label={l} htmlFor={id}>
-              <span className="relative flex items-center"><span className="absolute left-3 text-[13px] text-[#716A65]">Rp</span><input id={id} inputMode="numeric" className={cls(inp(id === "i-pf" && !!pErr && !!fin), "pl-9 text-right font-mono")} value={v} placeholder={id === "i-pf" ? "—" : undefined} onChange={(e) => set(e.target.value)} /></span>
-            </Field>
+            <FormField key={id} label={l} htmlFor={id}>
+              <AffixInput id={id} prefix="Rp" inputMode="numeric" invalid={id === "i-pf" && !!pErr && !!fin} value={v} placeholder={id === "i-pf" ? "—" : undefined} onChange={(e) => set(e.target.value)} />
+            </FormField>
           ))}
         </div>
         {pErr && <Err>{pErr}</Err>}
         <div className="grid gap-3.5 sm:grid-cols-2">
-          <Field label="Saham ditawarkan" htmlFor="i-sh">
-            <span className="relative flex items-center"><input id="i-sh" inputMode="numeric" className={cls(inp(), "pr-16 text-right font-mono")} value={shares} onChange={(e) => setShares(e.target.value)} /><span className="absolute right-3 text-xs text-[#716A65]">lembar</span></span>
+          <FormField label="Saham ditawarkan" htmlFor="i-sh">
+            <AffixInput id="i-sh" suffix="lembar" inputMode="numeric" value={shares} onChange={(e) => setShares(e.target.value)} />
             <Help>{sh ? `= ${lembar(sh)}` : "Jumlah lembar saham baru yang ditawarkan"}</Help>
-          </Field>
-          <Field label="Porsi dari modal setelah IPO" htmlFor="i-pr">
-            <span className="relative flex items-center"><input id="i-pr" inputMode="decimal" className={cls(inp(), "pr-9 text-right font-mono")} value={porsi} onChange={(e) => setPorsi(e.target.value)} /><span className="absolute right-3 text-[13px] text-[#716A65]">%</span></span>
+          </FormField>
+          <FormField label="Porsi dari modal setelah IPO" htmlFor="i-pr">
+            <AffixInput id="i-pr" suffix="%" inputMode="decimal" value={porsi} onChange={(e) => setPorsi(e.target.value)} />
             <Help>Dipakai untuk menghitung kapitalisasi pasar awal.</Help>
-          </Field>
+          </FormField>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           {[["Dana yang dihimpun", fund, fundSub], ["Kapitalisasi pasar di harga IPO", mcap, mcapSub]].map(([l, v, s]) => (
-            <div key={l} className="flex flex-col gap-0.5 rounded-[10px] border border-[#E7E5E4] bg-[#FAFAF9] p-3.5"><span className="text-[12.5px] text-[#716A65]">{l}</span><b className="font-mono text-xl font-semibold">{v}</b><small className="text-xs text-[#716A65]">{s}</small></div>
+            <Card key={l} size="sm" className="bg-accent shadow-none"><CardContent className="flex flex-col gap-0.5"><span className="text-[12.5px] text-muted-foreground">{l}</span><b className="font-mono text-xl font-semibold">{v}</b><small className="text-xs text-muted-foreground">{s}</small></CardContent></Card>
           ))}
         </div>
-        <Field label="Penjamin pelaksana emisi">
+        <FormField label="Penjamin pelaksana emisi">
           {uw.map((u, i) => (
-            <div key={u.id} className="flex items-center gap-1.5"><input className={inp()} aria-label={`Penjamin emisi ${i + 1}`} value={u.t} onChange={(e) => patchList(setUw, u.id, { t: e.target.value })} placeholder="Nama perusahaan sekuritas" /><RemoveBtn label={`Hapus penjamin ${i + 1}`} onClick={() => setUw(uw.filter((x) => x.id !== u.id))} /></div>
+            <div key={u.id} className="flex items-center gap-1.5"><Input aria-label={`Penjamin emisi ${i + 1}`} value={u.t} onChange={(e) => patchList(setUw, u.id, { t: e.target.value })} placeholder="Nama perusahaan sekuritas" /><RemoveBtn label={`Hapus penjamin ${i + 1}`} onClick={() => setUw(uw.filter((x) => x.id !== u.id))} /></div>
           ))}
           <LinkBtn onClick={() => setUw([...uw, withId({ t: "" })])}>+ Tambah penjamin</LinkBtn>
-        </Field>
-        <ToggleRow title="Disertai waran" desc="Waran seri I yang dibagikan gratis bersama saham IPO." on={wr} onChange={setWr} />
+        </FormField>
+        <ToggleRow id="sw-waran" title="Disertai waran" desc="Waran seri I yang dibagikan gratis bersama saham IPO." on={wr} onChange={setWr} />
         {wr && (
           <div className="grid gap-3.5 sm:grid-cols-2">
-            <Field label="Rasio" htmlFor="i-wr"><input id="i-wr" className={inp()} value={wrRatio} onChange={(e) => setWrRatio(e.target.value)} placeholder="mis. 5 saham : 2 waran" /></Field>
-            <Field label="Harga pelaksanaan" htmlFor="i-wp"><span className="relative flex items-center"><span className="absolute left-3 text-[13px] text-[#716A65]">Rp</span><input id="i-wp" inputMode="numeric" className={cls(inp(), "pl-9 text-right font-mono")} value={wrPrice} onChange={(e) => setWrPrice(e.target.value)} /></span></Field>
+            <FormField label="Rasio" htmlFor="i-wr"><Input id="i-wr" value={wrRatio} onChange={(e) => setWrRatio(e.target.value)} placeholder="mis. 5 saham : 2 waran" /></FormField>
+            <FormField label="Harga pelaksanaan" htmlFor="i-wp"><AffixInput id="i-wp" prefix="Rp" inputMode="numeric" value={wrPrice} onChange={(e) => setWrPrice(e.target.value)} /></FormField>
           </div>
         )}
       </Section>
 
       <Section id="i-dana" title="Rencana penggunaan dana" desc='Dari bab "Rencana Penggunaan Dana" di prospektus. Tampil di halaman emiten sebagai konteks bisnis, totalnya harus 100%.'>
-        <div className="grid grid-cols-[1fr_110px_36px] gap-2 text-xs font-semibold uppercase tracking-[.05em] text-[#716A65]"><span>Tujuan</span><span className="text-right">Porsi</span><span /></div>
+        <div className="grid grid-cols-[1fr_110px_32px] gap-2 text-xs font-semibold tracking-[.05em] text-muted-foreground uppercase"><span>Tujuan</span><span className="text-right">Porsi</span><span /></div>
         {ud.map((u, i) => (
-          <div key={u.id} className="grid grid-cols-[1fr_110px_36px] items-center gap-2">
-            <input className={inp()} aria-label={`Tujuan ${i + 1}`} value={u.t} onChange={(e) => patchList(setUd, u.id, { t: e.target.value })} placeholder="mis. Belanja modal pabrik" />
-            <span className="relative flex items-center"><input className={cls(inp(), "pr-8 text-right font-mono")} inputMode="decimal" aria-label={`Porsi tujuan ${i + 1}`} value={u.p} onChange={(e) => patchList(setUd, u.id, { p: e.target.value })} /><span className="absolute right-3 text-[13px] text-[#716A65]">%</span></span>
+          <div key={u.id} className="grid grid-cols-[1fr_110px_32px] items-center gap-2">
+            <Input aria-label={`Tujuan ${i + 1}`} value={u.t} onChange={(e) => patchList(setUd, u.id, { t: e.target.value })} placeholder="mis. Belanja modal pabrik" />
+            <AffixInput suffix="%" inputMode="decimal" aria-label={`Porsi tujuan ${i + 1}`} value={u.p} onChange={(e) => patchList(setUd, u.id, { p: e.target.value })} />
             <RemoveBtn label={`Hapus tujuan ${i + 1}`} onClick={() => setUd(ud.filter((x) => x.id !== u.id))} />
           </div>
         ))}
-        <div aria-hidden className="flex h-2 overflow-hidden rounded-full bg-[#F0EEEC]">
-          {ud.map((u, i) => <i key={u.id} className="h-full" style={{ width: `${udTot > 0 ? (Math.max(0, num(u.p ?? "")) / Math.max(udTot, 100)) * 100 : 0}%`, background: BAR[i % BAR.length] }} />)}
-        </div>
+        <ShareBar parts={ud.map((u, i) => ({ key: u.id, pct: udTot > 0 ? (Math.max(0, num(u.p ?? "")) / Math.max(udTot, 100)) * 100 : 0, color: BAR[i % BAR.length] }))} />
         <div className="flex items-center justify-between gap-3 text-sm">
           <LinkBtn onClick={() => setUd([...ud, withId({ t: "", p: "0" })])}>+ Tambah tujuan</LinkBtn>
-          <span>Total <b className={cls("font-mono", udTot === 100 ? "text-[#15803D]" : "text-[#B91C1C]")}>{dec(udTot, 2)}%</b> <Help>{udMsg}</Help></span>
+          <span className="flex items-center gap-1.5">Total <b className={cn("font-mono", udTot === 100 ? "text-sp-success" : "text-(--sp-danger-text)")}>{dec(udTot, 2)}%</b> <Help className="w-auto">{udMsg}</Help></span>
         </div>
       </Section>
 
       <Section id="i-dok" title="Prospektus" desc="PDF dari e-IPO atau situs BEI. Pengguna bisa mengunduhnya dari halaman emiten selama masa penawaran.">
         {DOCS.map((d) => (
-          <div key={d.k} className="grid items-center gap-3 border-t border-[#F0EEEC] pt-3 first:border-t-0 first:pt-0 sm:grid-cols-[200px_1fr]">
-            <div className="flex flex-col"><b className="flex items-center gap-2 text-sm font-semibold">{d.label}{d.req && <em className="rounded bg-[#FFF4E2] px-1.5 text-[11px] font-semibold not-italic leading-[18px] text-[#92400E]">Wajib</em>}</b><small className="text-[12.5px] text-[#716A65]">{d.help}</small></div>
-            <FileSlot value={docs[d.k]} onChange={(v) => { setDocs((p) => ({ ...p, [d.k]: v })); if (v && !v.up) flash(`${d.label} terunggah`); }} accept=".pdf" ext="PDF" maxMb={50} label={d.label} onError={flash} />
+          <div key={d.k} className="grid items-center gap-3 border-t border-sp-line-soft pt-3 first:border-t-0 first:pt-0 sm:grid-cols-[200px_1fr]">
+            <div className="flex flex-col"><b className="flex items-center gap-2 text-sm font-semibold">{d.label}{d.req && <Badge variant="amber" className="h-[18px] text-[11px]">Wajib</Badge>}</b><Help>{d.help}</Help></div>
+            <FileSlot value={docs[d.k]} onChange={(v) => { setDocs((p) => ({ ...p, [d.k]: v })); if (v && !v.up) toast(`${d.label} terunggah`); }} accept=".pdf" ext="PDF" maxMb={50} label={d.label} onError={(m) => toast(m)} />
           </div>
         ))}
       </Section>
 
       <Section id="i-tampil" title="Tampil di aplikasi" desc="Sebelum tercatat, emiten IPO hanya muncul di pencarian dengan label khusus.">
         <div>
-          <ToggleRow title="Tampilkan sebagai “Segera IPO”" desc="Muncul di pencarian dan halaman tema sebelum tanggal pencatatan, dengan jadwal dan prospektus. Tanpa harga perdagangan." on={soon} onChange={setSoon} />
-          <ToggleRow title="Jadikan aktif otomatis saat tercatat" desc="Di tanggal pencatatan, status berubah jadi Aktif dan harga mulai ikut sinkron BEI." on={auto} onChange={setAuto} />
+          <ToggleRow id="sw-soon" title="Tampilkan sebagai “Segera IPO”" desc="Muncul di pencarian dan halaman tema sebelum tanggal pencatatan, dengan jadwal dan prospektus. Tanpa harga perdagangan." on={soon} onChange={setSoon} />
+          <ToggleRow id="sw-auto" title="Jadikan aktif otomatis saat tercatat" desc="Di tanggal pencatatan, status berubah jadi Aktif dan harga mulai ikut sinkron BEI." on={auto} onChange={setAuto} />
         </div>
-        <Note><Info aria-hidden size={16} className="mt-0.5 flex-none" /><span>Bagian profil lainnya (angka utama, tren keuangan, struktur grup, tema) diisi di halaman edit setelah emiten ini disimpan.</span></Note>
+        <Note icon={<Info aria-hidden />}>Bagian profil lainnya (angka utama, tren keuangan, struktur grup, tema) diisi di halaman edit setelah emiten ini disimpan.</Note>
       </Section>
-      {toast}
     </EditorShell>
   );
 }

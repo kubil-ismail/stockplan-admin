@@ -1,20 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { toast } from "sonner";
+import { Circle, RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { CONFLICTS, DAY_LABEL, FAILS, HISTORY, histPoint, JOBS, jobOk } from "@/lib/sinkron";
-import { btn, Chip, cls, mono, TONE, useToast } from "./form-ui";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Spinner } from "@/components/ui/spinner";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageHeader, PanelCard, ROW, StatCard, StatusBadge } from "./form-ui";
 
-const Card = ({ children, id }: { children: React.ReactNode; id: string }) => <section aria-labelledby={id} className="min-w-0 overflow-hidden rounded-xl border border-[#E7E5E4] bg-white">{children}</section>;
-const Head = ({ id, title, aside, className }: { id: string; title: string; aside?: React.ReactNode; className?: string }) => (
-  <div className={cls("flex items-baseline justify-between gap-3 border-b border-[#F0EEEC] px-5 py-4", className)}><b id={id} className="text-[15px] font-semibold">{title}</b><span className="text-[13px] text-[#716A65]">{aside}</span></div>
+const Nothing = ({ title, sub }: { title: string; sub: string }) => (
+  <Empty className="py-8"><EmptyHeader><EmptyTitle>{title}</EmptyTitle><EmptyDescription>{sub}</EmptyDescription></EmptyHeader></Empty>
 );
-const Foot = ({ children }: { children: React.ReactNode }) => <div className="border-t border-[#F0EEEC] bg-[#FAFAF9] px-5 py-3.5 text-[13px] text-[#716A65]">{children}</div>;
-const Empty = ({ title, sub }: { title: string; sub: string }) => <div className="flex flex-col items-center gap-1 px-5 py-8 text-center"><b className="text-[15px]">{title}</b><span className="text-[13.5px] text-[#716A65]">{sub}</span></div>;
-const JOB_GRID = "grid grid-cols-[minmax(220px,1.6fr)_minmax(150px,1fr)_minmax(150px,1fr)_110px_150px] items-center gap-x-4";
+const Ticker = ({ children }: { children: React.ReactNode }) => <code className="w-14 pt-0.5 font-mono text-[13px] font-semibold">{children}</code>;
 
 export function SyncStatus() {
-  const { flash, toast } = useToast();
   const [run, setRun] = useState<string[]>([]);
   const [done, setDone] = useState<string[]>([]);
   const [fixed, setFixed] = useState<string[]>([]);
@@ -34,116 +40,96 @@ export function SyncStatus() {
       setRun((r) => r.filter((k) => k !== key));
       setDone((d) => [...d, key]);
       if (key === "mgmt") setFixed(FAILS.map((f) => f.tk)); // a fresh management run retries every failed emiten
-      flash(`${name} selesai disinkron`);
+      toast(`${name} selesai disinkron`);
     }, 1600));
   };
-  const resolve = (id: string, tk: string, useBei: boolean) => { setResolved([...resolved, id]); flash(useBei ? `${tk}: data BEI dipakai dan tercatat di Riwayat perubahan` : `${tk}: isian tim dipertahankan`); };
-
-  const KPIS = [
-    { l: "Emiten tercakup", v: "958", s: "semua emiten tercatat di BEI", w: false },
-    { l: "Sinkron penuh terakhir", v: "06.04", s: "hari ini · 4 menit 31 detik", w: false },
-    { l: "Gagal 24 jam terakhir", v: String(fails.length), s: fails.length ? `${fails.map((f) => f.tk).join(", ")} · manajemen` : "semua berhasil", w: true },
-    { l: "Perubahan menunggu tinjauan", v: String(conf.length), s: "data BEI berbeda dari isian tim", w: false },
-  ];
+  const resolve = (id: string, tk: string, useBei: boolean) => { setResolved([...resolved, id]); toast(useBei ? `${tk}: data BEI dipakai dan tercatat di Riwayat perubahan` : `${tk}: isian tim dipertahankan`); };
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-[26px] font-bold leading-tight tracking-tight">Sinkron data BEI</h1>
-          <p className="text-[#716A65]">Data otomatis dari situs BEI. Isian tim (ringkasan, sumber pendapatan, tema) tidak pernah ditimpa.</p>
-        </div>
-        <button type="button" aria-disabled={anyRun} className={cls(btn.base, anyRun ? btn.disabled : btn.dark)} onClick={() => { if (!anyRun) JOBS.forEach((j) => runJob(j.key, j.name)); }}>
-          <RefreshCw aria-hidden size={16} strokeWidth={1.8} className={anyRun ? "animate-spin" : ""} />{anyRun ? "Sedang berjalan…" : "Sinkron semua sekarang"}
-        </button>
-      </div>
+      <PageHeader title="Sinkron data BEI" desc="Data otomatis dari situs BEI. Isian tim (ringkasan, sumber pendapatan, tema) tidak pernah ditimpa." actions={
+        <Button variant="secondary" aria-disabled={anyRun} onClick={() => { if (!anyRun) JOBS.forEach((j) => runJob(j.key, j.name)); }}>
+          <RefreshCw aria-hidden className={anyRun ? "animate-spin" : ""} />{anyRun ? "Sedang berjalan…" : "Sinkron semua sekarang"}
+        </Button>} />
 
-      <div role="status" className={cls("flex items-center gap-3.5 rounded-xl border px-5 py-4 text-sm", warn ? "border-[#FDE68A] bg-[#FFFBEB]" : "border-[#BBF7D0] bg-[#F0FDF4]")}>
-        <i aria-hidden className={cls("size-3 flex-none rounded-full", warn ? "bg-[#FEA722] shadow-[0_0_0_4px_rgba(254,167,34,.25)]" : "bg-[#22C55E] shadow-[0_0_0_4px_rgba(34,197,94,.25)]")} />
-        <div className="flex flex-col"><b className="font-semibold">{warn ? "BEI bisa diakses · sebagian data gagal" : "Semua sumber BEI normal"}</b>
-          <span>{warn ? `Sinkron harian selesai 06.04 dengan ${fails.length} emiten gagal di data manajemen. Data lama tetap dipakai.` : "Sinkron harian selesai 06.04 tanpa kegagalan."}</span></div>
-      </div>
+      <Alert role="status" variant={warn ? "warning" : "success"} className="items-center px-5 py-4 text-sm">
+        <Circle aria-hidden className={cn("size-3! rounded-full", warn ? "fill-primary text-primary! shadow-[0_0_0_4px_rgba(254,167,34,.25)]" : "fill-[#22C55E] text-[#22C55E]! shadow-[0_0_0_4px_rgba(34,197,94,.25)]")} />
+        <AlertTitle className="font-semibold text-foreground">{warn ? "BEI bisa diakses · sebagian data gagal" : "Semua sumber BEI normal"}</AlertTitle>
+        <AlertDescription className="text-sm text-foreground">{warn ? `Sinkron harian selesai 06.04 dengan ${fails.length} emiten gagal di data manajemen. Data lama tetap dipakai.` : "Sinkron harian selesai 06.04 tanpa kegagalan."}</AlertDescription>
+      </Alert>
 
       <div className="grid grid-cols-2 gap-3.5 xl:grid-cols-4">
-        {KPIS.map((k) => (
-          <div key={k.l} className="flex flex-col gap-1 rounded-xl border border-[#E7E5E4] bg-white px-[18px] py-4">
-            <span className="text-[13px] font-medium text-[#716A65]">{k.l}</span><b className={cls(mono, "text-[28px] font-semibold leading-tight tracking-tight")}>{k.v}</b><small className="text-[12.5px] text-[#716A65]">{k.s}</small>
-          </div>
-        ))}
+        <StatCard label="Emiten tercakup" value="958" note="semua emiten tercatat di BEI" />
+        <StatCard label="Sinkron penuh terakhir" value="06.04" note="hari ini · 4 menit 31 detik" />
+        <StatCard label="Gagal 24 jam terakhir" value={fails.length} note={fails.length ? `${fails.map((f) => f.tk).join(", ")} · manajemen` : "semua berhasil"} />
+        <StatCard label="Perubahan menunggu tinjauan" value={conf.length} note="data BEI berbeda dari isian tim" />
       </div>
 
-      <Card id="h-jb">
-        <Head id="h-jb" title="Jadwal sinkron" aside="Waktu dalam WIB" />
-        <div className="overflow-x-auto">
-          <div className="min-w-[860px]">
-            <div className={cls(JOB_GRID, "border-b border-[#E7E5E4] bg-[#FAFAF9] px-5 py-3 text-xs font-semibold uppercase tracking-[.05em] text-[#716A65]")}><span>Data</span><span>Jadwal</span><span>Terakhir</span><span>Status</span><span /></div>
+      <PanelCard id="h-jb" title="Jadwal sinkron" aside="Waktu dalam WIB">
+        <Table className="min-w-[860px]">
+          <TableHeader><TableRow className="hover:bg-transparent"><TableHead>Data</TableHead><TableHead>Jadwal</TableHead><TableHead>Terakhir</TableHead><TableHead>Status</TableHead><TableHead><span className="sr-only">Aksi</span></TableHead></TableRow></TableHeader>
+          <TableBody>
             {JOBS.map((j) => {
               const running = run.includes(j.key), ok = jobOk(j.key, fails.length, done.includes(j.key));
               return (
-                <div key={j.key} className={cls(JOB_GRID, "border-b border-[#F0EEEC] px-5 py-3.5 text-sm last:border-b-0")}>
-                  <span className="flex flex-col leading-snug"><b className="font-semibold">{j.name}</b><small className="text-[12.5px] text-[#716A65]">{j.desc}</small>{j.note && <em className="text-[12.5px] not-italic text-[#B45309]">{j.note}</em>}</span>
-                  <span className="flex flex-col text-[13px] leading-snug">{j.sched}<small className="text-xs text-[#716A65]">berikutnya {j.next}</small></span>
-                  <span className="flex flex-col text-[13px] leading-snug">{done.includes(j.key) ? "Baru saja" : j.last}<small className="text-xs text-[#716A65]">{j.dur}</small></span>
-                  <span>{running ? <Chip cls={TONE.info}><span aria-hidden className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />Berjalan…</Chip> : <Chip cls={ok ? TONE.ok : TONE.warn}>{ok ? "Berhasil" : `${fails.length} gagal`}</Chip>}</span>
-                  <button type="button" aria-disabled={running} className={cls(btn.base, btn.small, running ? btn.disabled : btn.outline)} onClick={() => runJob(j.key, j.name)}>Jalankan sekarang</button>
-                </div>
+                <TableRow key={j.key}>
+                  <TableCell className="leading-snug"><b className="block font-semibold">{j.name}</b><small className="block text-[12.5px] text-muted-foreground">{j.desc}</small>{j.note && <em className="block text-[12.5px] text-[#B45309] not-italic">{j.note}</em>}</TableCell>
+                  <TableCell className="text-[13px] leading-snug">{j.sched}<small className="block text-xs text-muted-foreground">berikutnya {j.next}</small></TableCell>
+                  <TableCell className="text-[13px] leading-snug">{done.includes(j.key) ? "Baru saja" : j.last}<small className="block text-xs text-muted-foreground">{j.dur}</small></TableCell>
+                  <TableCell>{running ? <Badge variant="info" className="h-[22px]"><Spinner aria-hidden className="size-3" />Berjalan…</Badge> : <StatusBadge tone={ok ? "success" : "warning"}>{ok ? "Berhasil" : `${fails.length} gagal`}</StatusBadge>}</TableCell>
+                  <TableCell className="text-right"><Button variant="outline" size="sm" aria-disabled={running} onClick={() => runJob(j.key, j.name)}>Jalankan sekarang</Button></TableCell>
+                </TableRow>
               );
             })}
-          </div>
-        </div>
-      </Card>
+          </TableBody>
+        </Table>
+      </PanelCard>
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        <Card id="h-cf">
-          <Head id="h-cf" title="Perubahan dari BEI yang perlu ditinjau" aside={`${conf.length} menunggu`} />
+        <PanelCard id="h-cf" title="Perubahan dari BEI yang perlu ditinjau" aside={`${conf.length} menunggu`}>
           {conf.length ? conf.map((c) => (
-            <div key={c.id} className="grid grid-cols-[56px_1fr] gap-3.5 border-b border-[#F0EEEC] px-5 py-4 last:border-b-0">
-              <code className="pt-0.5 font-mono text-[13px] font-semibold">{c.tk}</code>
-              <div className="min-w-0">
-                <b className="text-sm font-semibold">{c.field}</b>
-                <div className="text-[12.5px] text-[#716A65]">{c.why}</div>
-                <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
-                  <div className="rounded-[10px] bg-[#F5F5F4] px-3 py-2.5 text-sm"><small className="block text-[11px] font-semibold uppercase tracking-[.05em] text-[#716A65]">Di StockPlan</small>{c.a}</div>
-                  <div className="rounded-[10px] bg-[#EFF6FF] px-3 py-2.5 text-sm text-[#1E3A8A]"><small className="block text-[11px] font-semibold uppercase tracking-[.05em] text-[#1D4ED8]">Dari BEI · {c.when}</small>{c.b}</div>
+            <Item key={c.id} className={cn(ROW, "flex-nowrap items-start py-4")}>
+              <ItemMedia><Ticker>{c.tk}</Ticker></ItemMedia>
+              <ItemContent className="min-w-0 gap-1">
+                <ItemTitle>{c.field}</ItemTitle>
+                <ItemDescription className="line-clamp-none text-[12.5px]">{c.why}</ItemDescription>
+                <div className="mt-1.5 grid gap-2.5 sm:grid-cols-2">
+                  <Card size="sm" className="gap-1 border-0 bg-muted px-3 py-2.5 text-sm shadow-none"><small className="text-[11px] font-semibold tracking-[.05em] text-muted-foreground uppercase">Di StockPlan</small>{c.a}</Card>
+                  <Card size="sm" className="gap-1 border-0 bg-sp-info-bg px-3 py-2.5 text-sm text-[#1E3A8A] shadow-none"><small className="text-[11px] font-semibold tracking-[.05em] text-sp-info uppercase">Dari BEI · {c.when}</small>{c.b}</Card>
                 </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className={cls(btn.base, btn.dark, btn.small)} onClick={() => resolve(c.id, c.tk, true)}>Pakai data BEI</button>
-                  <button type="button" className={cls(btn.base, btn.outline, btn.small)} onClick={() => resolve(c.id, c.tk, false)}>Pertahankan isian tim</button>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => resolve(c.id, c.tk, true)}>Pakai data BEI</Button>
+                  <Button variant="outline" size="sm" onClick={() => resolve(c.id, c.tk, false)}>Pertahankan isian tim</Button>
                 </div>
-              </div>
-            </div>
-          )) : <Empty title="Semua sudah ditinjau" sub="Perubahan baru dari BEI akan muncul di sini." />}
-        </Card>
+              </ItemContent>
+            </Item>
+          )) : <Nothing title="Semua sudah ditinjau" sub="Perubahan baru dari BEI akan muncul di sini." />}
+        </PanelCard>
 
         <div className="flex min-w-0 flex-col gap-4">
-          <Card id="h-fl">
-            <Head id="h-fl" title="Gagal di sinkron terakhir" aside="Manajemen · 06.04" />
+          <PanelCard id="h-fl" title="Gagal di sinkron terakhir" aside="Manajemen · 06.04" footer="Yang gagal dicoba ulang otomatis besok 06.00. Data lama tetap tampil di aplikasi.">
             {fails.length ? fails.map((f) => (
-              <div key={f.tk} className="grid grid-cols-[56px_1fr_auto] items-start gap-3.5 border-b border-[#F0EEEC] px-5 py-3.5 last:border-b-0">
-                <code className="pt-0.5 font-mono text-[13px] font-semibold">{f.tk}</code>
-                <div className="min-w-0 text-[13.5px]">{f.msg}<pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded-lg bg-[#FEF2F2] px-2.5 py-1.5 font-mono text-xs text-[#991B1B]">{f.log}</pre></div>
-                <button type="button" className={cls(btn.base, btn.outline, btn.small)} onClick={() => { setFixed([...fixed, f.tk]); flash(`${f.tk} berhasil disinkron ulang`); }}>Coba lagi</button>
-              </div>
-            )) : <Empty title="Tidak ada yang gagal" sub="Semua emiten berhasil disinkron." />}
-            <Foot>Yang gagal dicoba ulang otomatis besok 06.00. Data lama tetap tampil di aplikasi.</Foot>
-          </Card>
+              <Item key={f.tk} className={cn(ROW, "flex-nowrap items-start")}>
+                <ItemMedia><Ticker>{f.tk}</Ticker></ItemMedia>
+                <ItemContent className="min-w-0 gap-1.5 text-[13.5px]">{f.msg}<pre className="overflow-x-auto rounded-lg bg-(--sp-danger-bg) px-2.5 py-1.5 font-mono text-xs whitespace-pre-wrap text-[#991B1B]">{f.log}</pre></ItemContent>
+                <ItemActions><Button variant="outline" size="sm" onClick={() => { setFixed([...fixed, f.tk]); toast(`${f.tk} berhasil disinkron ulang`); }}>Coba lagi</Button></ItemActions>
+              </Item>
+            )) : <Nothing title="Tidak ada yang gagal" sub="Semua emiten berhasil disinkron." />}
+          </PanelCard>
 
-          <Card id="h-hb">
-            <div className="flex items-baseline justify-between gap-3 border-b border-[#F0EEEC] px-5 py-4">
-              <b id="h-hb" className="text-[15px] font-semibold">14 hari terakhir</b>
-              <span className="flex gap-3 text-xs text-[#716A65]"><span className="inline-flex items-center gap-1.5"><i className="size-2.5 rounded-sm bg-[#86EFAC]" />Berhasil</span><span className="inline-flex items-center gap-1.5"><i className="size-2.5 rounded-sm bg-[#FCA5A5]" />Gagal</span></span>
-            </div>
-            <div role="img" aria-label={`Riwayat sinkron 14 hari: semua hari berhasil di atas 99 persen, kegagalan terbesar ${HISTORY[13]} emiten hari ini`} className="flex h-24 items-stretch gap-1 px-5 pt-3.5">
-              {HISTORY.map((n, i) => {
-                const p = histPoint(i === 13 ? fails.length : n, DAY_LABEL[i]);
-                return <span key={i} title={p.t} className="flex flex-1 flex-col overflow-hidden rounded"><i className="bg-[#FCA5A5]" style={{ height: `${p.f}%` }} /><i className="bg-[#86EFAC]" style={{ height: `${p.o}%` }} /></span>;
-              })}
-            </div>
-            <div className="flex justify-between px-5 pb-4 pt-2 font-mono text-[11px] text-[#716A65]"><span>24 Okt</span><span>30 Okt</span><span>Hari ini</span></div>
-          </Card>
+          <PanelCard id="h-hb" title="14 hari terakhir" aside={<span className="flex gap-3 text-xs"><span className="inline-flex items-center gap-1.5"><i className="size-2.5 rounded-sm bg-[#86EFAC]" />Berhasil</span><span className="inline-flex items-center gap-1.5"><i className="size-2.5 rounded-sm bg-[#FCA5A5]" />Gagal</span></span>}>
+            <CardContent>
+              <div role="img" aria-label={`Riwayat sinkron 14 hari: semua hari berhasil di atas 99 persen, kegagalan terbesar ${HISTORY[13]} emiten hari ini`} className="flex h-24 items-stretch gap-1 pt-3.5">
+                {HISTORY.map((n, i) => {
+                  const p = histPoint(i === 13 ? fails.length : n, DAY_LABEL[i]);
+                  return <span key={i} title={p.t} className="flex flex-1 flex-col overflow-hidden rounded"><i className="bg-[#FCA5A5]" style={{ height: `${p.f}%` }} /><i className="bg-[#86EFAC]" style={{ height: `${p.o}%` }} /></span>;
+                })}
+              </div>
+              <div className="flex justify-between pt-2 pb-4 font-mono text-[11px] text-muted-foreground"><span>24 Okt</span><span>30 Okt</span><span>Hari ini</span></div>
+            </CardContent>
+          </PanelCard>
         </div>
       </div>
-      {toast}
     </div>
   );
 }

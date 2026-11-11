@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin/admin-header";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 
@@ -6,16 +7,16 @@ import { AdminSidebar } from "@/components/admin/admin-sidebar";
 // the fallbacks keep the sidebar width / header height so nothing jumps.
 export default function AdminPanelLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen items-stretch bg-white text-[15px] text-[#1C1917]">
-      <Suspense fallback={<aside aria-hidden className="h-screen w-60 flex-none border-r border-[#E7E5E4] bg-white" />}>
+    <SidebarProvider className="text-[15px]">
+      <Suspense fallback={<div aria-hidden className="hidden w-(--sidebar-width) flex-none border-r border-border bg-sidebar md:block" />}>
         <AdminSidebar />
       </Suspense>
-      <div className="flex min-w-0 flex-1 flex-col bg-[#FAFAF9]">
-        <Suspense fallback={<header aria-hidden className="h-[61px] border-b border-[#E7E5E4] bg-white" />}>
+      <SidebarInset aria-label="Konten halaman" className="min-w-0 bg-accent">
+        <Suspense fallback={<div aria-hidden className="h-[61px] border-b border-border bg-background" />}>
           <AdminHeader />
         </Suspense>
-        <main aria-label="Konten halaman" className="flex-1 px-7 pb-12 pt-6">{children}</main>
-      </div>
-    </div>
+        <div className="flex-1 px-4 pt-6 pb-12 md:px-7">{children}</div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
