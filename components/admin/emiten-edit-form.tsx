@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useFormik } from "formik";
 import { toast } from "sonner";
 import { ExternalLink, Info, Lock, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +14,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { describeError, publishCompany, saveCompany, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { fieldOf } from "@/lib/formik-field";
 import { fmtWhen } from "@/lib/format";
 import { dec, num } from "@/lib/ipo";
 import { profileFromForm, profileToForm, type KeyId, type LvKey, type MetricId, type TrKey } from "@/lib/emiten-form";
@@ -47,33 +49,56 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
   const [view, setView] = useState(loaded);
   const [p0] = useState(() => profileFromForm(loaded.form)); // initial values; edited copies live in the states below
   const code = view.company.ticker;
-  const [name, setName] = useState(p0.name);
-  const [tr, setTr] = useState<TrKey>(p0.tr);
-  const [trSince, setTrSince] = useState(p0.trSince);
-  const [trSrc, setTrSrc] = useState(p0.trSrc);
-  const [trWhy, setTrWhy] = useState(p0.trWhy);
-  const [sektor, setSektor] = useState(p0.sektor);
-  const [sub, setSub] = useState(p0.sub);
-  const [priceDate, setPriceDate] = useState(p0.priceDate);
-  const [period, setPeriod] = useState(p0.period);
-  const [asSrc, setAsSrc] = useState(p0.asSrc);
-  const [keys, setKeys] = useState(p0.keys);
-  const [shortSum, setShortSum] = useState(p0.shortSum);
-  const [sum, setSum] = useState(p0.sum);
-  const [sumSrc, setSumSrc] = useState(p0.sumSrc);
-  const [pts, setPts] = useState<Record<"str" | "weak" | "mon", L<{ t: string }>>>({ str: withIds(p0.str.map((t) => ({ t }))), weak: withIds(p0.weak.map((t) => ({ t }))), mon: withIds(p0.mon.map((t) => ({ t }))) });
-  const [pers, setPers] = useState(() => withIds(p0.pers));
-  const [tv, setTv] = useState(p0.tv);
-  const [notes, setNotes] = useState(p0.notes);
+  const [init] = useState(() => ({
+    name: p0.name, tr: p0.tr, trSince: p0.trSince, trSrc: p0.trSrc, trWhy: p0.trWhy, sektor: p0.sektor, sub: p0.sub,
+    priceDate: p0.priceDate, period: p0.period, asSrc: p0.asSrc, keys: p0.keys, shortSum: p0.shortSum, sum: p0.sum, sumSrc: p0.sumSrc,
+    pts: { str: withIds(p0.str.map((t) => ({ t }))), weak: withIds(p0.weak.map((t) => ({ t }))), mon: withIds(p0.mon.map((t) => ({ t }))) } as Record<"str" | "weak" | "mon", L<{ t: string }>>,
+    pers: withIds(p0.pers), tv: p0.tv, notes: p0.notes, rev: withIds(p0.rev), subs: withIds(p0.subs), sh: withIds(p0.sh), shNote: p0.shNote,
+    mg: withIds(p0.mg), rk: withIds(p0.rk), nw: withIds(p0.nw),
+  }));
+  const intent = useRef<"draft" | "publish">("draft");
+  // The API validates (and has the final say on publish), so the form only manages values and submitting.
+  const form = useFormik({
+    initialValues: init,
+    onSubmit: async () => {
+      const publishing = intent.current === "publish";
+      intent.current = "draft";
+      const v = await save();
+      if (!v) return;
+      if (!publishing) return void toast("Draf tersimpan. Pengguna masih melihat versi yang sudah terbit.");
+      const r = await publishCompany(code); // publish uses the saved draft, so unsaved edits go first
+      if (!r.ok) return void toast(describeError(r.error));
+      setView(r.data);
+      toast(`Perubahan ${code} diterbitkan dan langsung tampil di aplikasi`);
+    },
+  });
+  const f = fieldOf(form);
+  const [name, setName] = f("name");
+  const [tr, setTr] = f("tr");
+  const [trSince, setTrSince] = f("trSince");
+  const [trSrc, setTrSrc] = f("trSrc");
+  const [trWhy, setTrWhy] = f("trWhy");
+  const [sektor, setSektor] = f("sektor");
+  const [sub, setSub] = f("sub");
+  const [priceDate, setPriceDate] = f("priceDate");
+  const [period, setPeriod] = f("period");
+  const [asSrc, setAsSrc] = f("asSrc");
+  const [keys, setKeys] = f("keys");
+  const [shortSum, setShortSum] = f("shortSum");
+  const [sum, setSum] = f("sum");
+  const [sumSrc, setSumSrc] = f("sumSrc");
+  const [pts, setPts] = f("pts");
+  const [pers, setPers] = f("pers");
+  const [tv, setTv] = f("tv");
+  const [notes, setNotes] = f("notes");
   const [metric, setMetric] = useState<MetricId>("sales");
-  const [rev, setRev] = useState(() => withIds(p0.rev));
-  const [subs, setSubs] = useState(() => withIds(p0.subs));
-  const [sh, setSh] = useState(() => withIds(p0.sh));
-  const [shNote, setShNote] = useState(p0.shNote);
-  const [mg, setMg] = useState(() => withIds(p0.mg));
-  const [rk, setRk] = useState(() => withIds(p0.rk));
-  const [nw, setNw] = useState(() => withIds(p0.nw));
-  const [busy, setBusy] = useState(false);
+  const [rev, setRev] = f("rev");
+  const [subs, setSubs] = f("subs");
+  const [sh, setSh] = f("sh");
+  const [shNote, setShNote] = f("shNote");
+  const [mg, setMg] = f("mg");
+  const [rk, setRk] = f("rk");
+  const [nw, setNw] = f("nw");
 
   // generic list patch/remove/add
   const patch = <T extends { id: number }>(set: React.Dispatch<React.SetStateAction<T[]>>, i: number, f: Partial<T>) => set((l) => l.map((x) => (x.id === i ? { ...x, ...f } : x)));
@@ -132,17 +157,10 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
     setView(r.data);
     return r.data;
   };
-  const saveDraft = async () => { setBusy(true); const v = await save(); setBusy(false); if (v) toast("Draf tersimpan. Pengguna masih melihat versi yang sudah terbit."); };
-  const publish = async () => {
+  const publish = () => {
     if (!canPub) return toast(`Belum bisa terbit: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`);
-    setBusy(true);
-    const v = await save(); // publish uses the saved draft, so unsaved edits go first
-    const r = v ? await publishCompany(code) : null;
-    setBusy(false);
-    if (!r) return;
-    if (!r.ok) return toast(describeError(r.error));
-    setView(r.data);
-    toast(`Perubahan ${code} diterbitkan dan langsung tampil di aplikasi`);
+    intent.current = "publish";
+    void form.submitForm();
   };
 
   const header = (
@@ -158,8 +176,8 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
         <Link href={`/emiten/${code}`} className={buttonVariants({ variant: "outline" })}><ExternalLink aria-hidden />Lihat di aplikasi</Link>
-        <Button variant="outline" disabled={busy} onClick={() => void saveDraft()}>Simpan draf</Button>
-        <Button aria-disabled={!canPub} disabled={busy} onClick={() => void publish()}>Terbitkan</Button>
+        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan draf</Button>
+        <Button aria-disabled={!canPub} disabled={form.isSubmitting} onClick={publish}>Terbitkan</Button>
       </div>
     </div>
   );
@@ -180,6 +198,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
   const rowCls = "grid items-center gap-2";
 
   return (
+    <form onSubmit={form.handleSubmit} noValidate>
     <EditorShell header={header} checks={checks} rail={rail}>
       <Section id="s-id" title="Identitas & status" desc="Biasanya ikut sinkron BEI. Ubah manual hanya kalau ada perubahan nama, kode, atau status yang belum tersinkron.">
         <div className="flex flex-wrap gap-5">
@@ -384,6 +403,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
         )) : <Help>Belum dipetakan ke tema mana pun.</Help>}
       </Section>
     </EditorShell>
+    </form>
   );
 }
 

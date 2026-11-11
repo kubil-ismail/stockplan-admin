@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { checklist, fromForm, moveEmiten, moveStage, parsePct, readiness, removeEmiten, stagesOf, toForm, type Stage } from "./tema.ts";
+import { checklist, fromForm, moveEmiten, moveStage, parsePct, readiness, removeEmiten, stagesOf, toForm, validateTema, type Stage } from "./tema.ts";
 
 const S: Stage[] = [
   { id: 1, name: "Hulu", g: "g1", desc: "d", rows: [{ tk: "PGEO", p: "100" }] },
@@ -33,4 +33,7 @@ assert.equal(d.stages[0].rows[0].p, "12,5");
 assert.deepEqual(toForm(d), form);
 assert.deepEqual(checklist(d).map((c) => c[1]), [true, true, false, true]); // ITMG has no share/source
 assert.deepEqual(checklist({ ...d, stages: [] }).map((c) => c[1]), [true, false, true, true]);
+assert.deepEqual(Object.keys(validateTema({ ...d, name: "ab", sectorSlug: "" })), ["name", "sectorSlug"]);
+assert.deepEqual(validateTema({ ...d, stages: [{ ...d.stages[0], rows: [{ tk: "BUMI", p: "150" }] }] }), { stages: "Porsi harus angka 0–100" });
+assert.deepEqual(validateTema(d), {});
 console.log("tema ok");

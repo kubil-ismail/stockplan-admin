@@ -59,6 +59,16 @@ export const toForm = (d: Draft): ThemeForm => ({
   stages: d.stages.map((s) => ({ name: s.name, groupKey: s.g, description: s.desc, rows: s.rows.map((r) => ({ ticker: r.tk, pct: parsePct(r.p) as number | null, source: r.src ?? "" })) })),
 });
 
+/** Submit-time checks for the builder form (Formik `validate`). Drafts may be incomplete; the API gates publishing. */
+export function validateTema(d: Draft) {
+  const e: { name?: string; sectorSlug?: string; description?: string; stages?: string } = {};
+  if (d.name.trim().length < 3) e.name = "Nama tema minimal 3 huruf";
+  if (!d.sectorSlug) e.sectorSlug = "Pilih sektor dulu"; // COPY: perlu review
+  if (d.description.length > 160) e.description = "Deskripsi maksimal 160 karakter"; // COPY: perlu review
+  if (d.stages.some((s) => s.rows.some((r) => { const v = parsePct(r.p); return v !== null && !(v >= 0 && v <= 100); }))) e.stages = "Porsi harus angka 0–100"; // COPY: perlu review
+  return e;
+}
+
 /** Mirrors the first four publish conditions of the API (lib/adminThemes.js checks()); the fifth, emiten readiness, only the API can tell. */
 export function checklist(d: Draft): [string, boolean][] {
   const f = (s: string) => s.trim() !== "";

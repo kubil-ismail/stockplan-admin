@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useFormik } from "formik";
 import { toast } from "sonner";
 import { ChevronDown, ChevronUp, GripVertical, MoreHorizontal, MousePointer2, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDebounced } from "@/hooks/use-debounced";
 import { describeError, listCompanies, type ListResponse } from "@/lib/admin-companies";
 import { createTheme, publishTheme, saveTheme, type ThemeView } from "@/lib/admin-themes";
-import { checklist, fromForm, moveEmiten, moveStage, parsePct, READY_MIN, removeEmiten, stagesOf, toForm, type Draft, type Group, type Result, type Row, type Stage } from "@/lib/tema";
+import { checklist, fromForm, moveEmiten, moveStage, READY_MIN, removeEmiten, stagesOf, toForm, validateTema, type Draft, type Group, type Result, type Row, type Stage } from "@/lib/tema";
 import { ICONS, PALETTE } from "@/lib/tema-data";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -51,23 +52,48 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
   const router = useRouter();
   const [d0] = useState<Draft>(() => (loaded ? fromForm(loaded.form) : NEW_DRAFT));
   const [view, setView] = useState(loaded);
-  const [name, setName] = useState(d0.name);
-  const [sektor, setSektor] = useState(d0.sectorSlug);
-  const [desc, setDesc] = useState(d0.description);
-  const [drivers, setDrivers] = useState(d0.drivers.length ? d0.drivers : [""]);
-  const [groups, setGroups] = useState<Group[]>(d0.groups);
   const [gOpen, setGOpen] = useState<Record<string, boolean>>({});
-  const [stages, setStages] = useState<Stage[]>(d0.stages);
   const [nid, setNid] = useState(d0.stages.length + 1);
   const [info, setInfo] = useState<Info>(() => Object.fromEntries((loaded?.companies ?? []).map((c) => [c.ticker, { name: c.name, logo: c.logoUrl ?? undefined }])));
-  const [nameErr, setNameErr] = useState("");
-  const [busy, setBusy] = useState(false);
   const [pq, setPq] = useState("");
   const [psec, setPsec] = useState("");
   const [pool, setPool] = useState<Pool | null>(null);
   const [drag, setDrag] = useState<Drag>(null);
   const [over, setOver] = useState<string | null>(null);
   const slug = view?.theme.slug;
+  const intent = useRef<"draft" | "publish">("draft");
+
+  // Form state lives in Formik; validation runs on submit only and a field's error clears on its next edit (like the login form).
+  const form = useFormik<Draft>({
+    initialValues: { ...d0, drivers: d0.drivers.length ? d0.drivers : [""] },
+    validateOnChange: false,
+    validateOnBlur: false,
+    validate: validateTema,
+    onSubmit: async (v, { setFieldError }) => {
+      const publishing = intent.current === "publish";
+      intent.current = "draft";
+      const body = toForm(v);
+      const r = slug ? await saveTheme(slug, body) : await createTheme(body);
+      if (!r.ok) {
+        if (r.error.fields?.name) setFieldError("name", r.error.fields.name);
+        return void toast(describeError(r.error));
+      }
+      setView(r.data);
+      if (!publishing) toast(`Draf tema ${r.data.form.name} tersimpan`);
+      else { // publish uses the saved draft
+        const p = await publishTheme(r.data.theme.slug);
+        if (p.ok) { setView(p.data); toast(`Tema ${p.data.form.name} diterbitkan`); } else toast(describeError(p.error)); // COPY: perlu review
+      }
+      if (!slug) router.replace(`/admin/tema/${r.data.theme.slug}`);
+    },
+  });
+  const { groups, stages, drivers } = form.values;
+  const errs = form.errors as Record<string, string | undefined>;
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => { if (errs[k]) form.setFieldError(k, undefined); void form.setFieldValue(k, v, false); };
+  const setGroups = (v: Group[]) => set("groups", v);
+  const setStages = (v: Stage[]) => set("stages", v);
+  const setDrivers = (v: string[]) => set("drivers", v);
+  const change = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { if (errs[e.target.name]) form.setFieldError(e.target.name, undefined); form.handleChange(e); };
 
   // Emiten pool = Data emiten search, keyed by its filters so "loading" is derived.
   const dpq = useDebounced(pq.trim(), 300);
@@ -91,11 +117,7 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
   const updRow = (sid: number, tk: string, o: Partial<Row>) => setStages(stages.map((s) => (s.id === sid ? { ...s, rows: s.rows.map((r) => (r.tk === tk ? { ...r, ...o } : r)) } : s)));
   const newKey = () => { let i = groups.length + 1; while (groups.some((g) => g.id === `g${i}`)) i += 1; return `g${i}`; };
 
-  const draft: Draft = { name, sectorSlug: sektor, description: desc, drivers, groups, stages };
-  const checks = [...checklist(draft), ...(view ? [[`Kesiapan emiten ≥ ${READY_MIN}%`, view.readiness.percent >= READY_MIN] as [string, boolean]] : [])];
-  const badPct = stages.some((s) => s.rows.some((r) => { const v = parsePct(r.p); return v !== null && !(v >= 0 && v <= 100); }));
-  // Drafts may be incomplete (the API only checks structure); completeness gates publishing.
-  const canSave = name.trim().length >= 3 && !!sektor && desc.length <= 160 && !badPct;
+  const checks = [...checklist(form.values), ...(view ? [[`Kesiapan emiten ≥ ${READY_MIN}%`, view.readiness.percent >= READY_MIN] as [string, boolean]] : [])];
   const used = new Set(stages.flatMap((s) => s.rows.map((r) => r.tk)));
   const poolLoading = !pool || pool.key !== pkey;
   const poolDz = drag?.kind === "em" && drag.from !== null;
@@ -111,36 +133,8 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
     onDrop: (e: React.DragEvent) => { e.preventDefault(); if (drag && accept) onDrop(); endDrag(); },
   });
 
-  const save = async () => {
-    if (!canSave) { toast(badPct ? "Porsi harus angka 0–100" : "Isi nama tema (minimal 3 huruf) dan pilih sektor dulu"); return null; } // COPY: perlu review
-    const form = toForm(draft);
-    const r = slug ? await saveTheme(slug, form) : await createTheme(form);
-    if (!r.ok) { setNameErr(r.error.fields?.name ?? ""); toast(describeError(r.error)); return null; }
-    setNameErr("");
-    setView(r.data);
-    return r.data;
-  };
-  const saveDraft = async () => {
-    setBusy(true);
-    const v = await save();
-    setBusy(false);
-    if (!v) return;
-    toast(`Draf tema ${v.form.name} tersimpan`);
-    if (!slug) router.replace(`/admin/tema/${v.theme.slug}`);
-  };
-  const publish = async () => {
-    setBusy(true);
-    const v = await save(); // publish uses the saved draft
-    const r = v ? await publishTheme(v.theme.slug) : null;
-    setBusy(false);
-    if (!r) return;
-    if (!r.ok) return toast(describeError(r.error));
-    setView(r.data);
-    toast(`Tema ${r.data.form.name} diterbitkan`); // COPY: perlu review
-  };
-
   return (
-    <div className="flex flex-col gap-5">
+    <form onSubmit={form.handleSubmit} noValidate className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
           <h1 className="flex items-center gap-3 text-[26px] leading-tight font-bold tracking-tight">{slug ? "Edit tema" : "Tambah tema"}{view && <StatusBadge tone={view.theme.published ? "success" : "neutral"}>{view.theme.statusLabel}</StatusBadge>}</h1>
@@ -152,14 +146,14 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
       <Section id="t-id" title="1 · Identitas tema" desc="Tampil di kartu tema dan di atas peta rantai nilai.">
         <div className="grid gap-3.5 sm:grid-cols-[1fr_260px]">
           <FormField label="Nama tema" htmlFor="n-n">
-            <Input id="n-n" aria-invalid={!!nameErr} value={name} onChange={(e) => { setName(e.target.value); setNameErr(""); }} placeholder="mis. Energi terbarukan" />
-            {nameErr && <Help className="text-(--sp-danger-text)">{nameErr}</Help>}
+            <Input id="n-n" name="name" aria-invalid={!!errs.name} value={form.values.name} onChange={change} placeholder="mis. Energi terbarukan" />
+            {errs.name && <Help className="text-(--sp-danger-text)">{errs.name}</Help>}
           </FormField>
-          <FormField label="Sektor IDX-IC" htmlFor="n-s"><NativeSelect id="n-s" value={sektor} onChange={(e) => setSektor(e.target.value)}><NativeSelectOption value="">Pilih sektor…</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect></FormField>
+          <FormField label="Sektor IDX-IC" htmlFor="n-s"><NativeSelect id="n-s" name="sectorSlug" aria-invalid={!!errs.sectorSlug} value={form.values.sectorSlug} onChange={change}><NativeSelectOption value="">Pilih sektor…</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect>{errs.sectorSlug && <Help className="text-(--sp-danger-text)">{errs.sectorSlug}</Help>}</FormField>
         </div>
         <FormField label="Deskripsi singkat" htmlFor="n-d">
-          <Textarea id="n-d" aria-invalid={desc.length > 160} className="min-h-16" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Satu kalimat: bisnis apa saja yang masuk tema ini." />
-          <div className="flex justify-between gap-3"><Help>Bisa diubah lagi setelah draf dibuat.</Help><Counter n={desc.length} max={160} /></div>
+          <Textarea id="n-d" name="description" aria-invalid={form.values.description.length > 160} className="min-h-16" value={form.values.description} onChange={change} placeholder="Satu kalimat: bisnis apa saja yang masuk tema ini." />
+          <div className="flex justify-between gap-3"><Help>Bisa diubah lagi setelah draf dibuat.</Help><Counter n={form.values.description.length} max={160} /></div>
         </FormField>
         {/* COPY: perlu review (label, petunjuk, tombol): "Pendorong utama" ada di API tapi belum di desain. */}
         <FormField label="Pendorong utama">
@@ -229,6 +223,7 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
           <span>Tanpa mouse: tombol <Kbd>⋯</Kbd> di kartu</span>
         </div>
 
+        {errs.stages && <Help className="text-(--sp-danger-text)">{errs.stages}</Help>}
         <div className="flex items-start gap-4 overflow-x-auto pb-2">
           <Card size="sm" aria-label="Daftar emiten" {...dropProps("pool", poolDz, () => { if (drag?.kind === "em" && drag.from !== null) apply(removeEmiten(stages, drag.tk, drag.from)); })}
             className={cn("sticky left-0 w-[260px] flex-none gap-2.5 bg-accent shadow-none", poolDz && (over === "pool" ? "border-foreground bg-[#FFFBF2]" : "border-dashed border-sp-faint"))}>
@@ -237,19 +232,21 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
               <SearchInput label="Cari emiten" placeholder="Cari kode atau nama" value={pq} onChange={setPq} className="min-w-0" />
               <NativeSelect size="sm" aria-label="Filter sektor emiten" value={psec} onChange={(e) => setPsec(e.target.value)}><NativeSelectOption value="">Semua sektor</NativeSelectOption>{sectors.map((x) => <NativeSelectOption key={x.slug} value={x.slug}>{x.name}</NativeSelectOption>)}</NativeSelect>
             </CardHeader>
-            <CardContent aria-busy={poolLoading} className={cn("flex max-h-[560px] flex-col gap-1.5 overflow-y-auto", poolLoading && pool && "opacity-50")}>
+            <CardContent aria-busy={poolLoading} className={cn("flex max-h-[min(560px,65vh)] flex-col gap-1.5 overflow-y-auto overscroll-contain", poolLoading && pool && "opacity-50")}>
               {poolItems.map((c) => {
                 const k = c.ticker, at = stagesOf(stages, k);
                 return (
                   <Card key={k} size="sm" {...dragProps({ kind: "em", tk: k, from: null })} title={at.length ? `${k} sudah di tahap ${at.join(", ")}. Tarik lagi untuk menambah ke tahap lain.` : `Tarik ${k} ke salah satu tahap`}
-                    className={cn("cursor-grab flex-row items-center gap-2 px-1.5 py-1.5 active:cursor-grabbing", drag?.kind === "em" && drag.tk === k && drag.from === null && "opacity-40")}>
+                    className={cn("shrink-0 cursor-grab flex-row items-center gap-2 px-1.5 py-1.5 active:cursor-grabbing", drag?.kind === "em" && drag.tk === k && drag.from === null && "opacity-40")}>
                     <GripVertical aria-hidden className="size-3.5 flex-none text-sp-faint" />
                     <Avatar tk={k} logo={c.logoUrl ?? undefined} />
                     <span className="flex min-w-0 flex-1 flex-col leading-tight"><b className="font-mono text-[12.5px]">{k}</b><em className="truncate text-xs text-muted-foreground not-italic">{c.name}</em></span>
-                    <span className={cn("text-[11px] whitespace-nowrap", at.length ? "font-semibold text-sp-ink-2" : "text-sp-faint")}>{at.length ? `Tahap ${at.join(", ")}` : "Belum"}</span>
+                    <span className={cn("max-w-16 truncate text-[11px] whitespace-nowrap", at.length ? "font-semibold text-sp-ink-2" : "text-sp-faint")}>{at.length ? `Tahap ${at.join(", ")}` : "Belum"}</span>
                   </Card>
                 );
               })}
+              {/* COPY: perlu review */}
+              {!poolLoading && pool?.data && pool.data.total > poolItems.length && <Help className="shrink-0 px-1 text-center">Menampilkan {poolItems.length} dari {pool.data.total.toLocaleString("id-ID")}. Cari kode atau pilih sektor untuk mempersempit.</Help>}
               {pool?.error && <Help className="text-(--sp-danger-text)">{pool.error}</Help>}
               {!poolLoading && !pool?.error && !poolItems.length && <Help>Tidak ada emiten yang cocok.</Help>}
               {poolLoading && !pool?.error && <Help>Memuat emiten…</Help>}
@@ -306,10 +303,10 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
           {checks.map(([l, c]) => <span key={l} className="inline-flex items-center gap-1.5"><i aria-hidden className={cn("inline-flex size-[18px] items-center justify-center rounded-full text-[10px] font-bold not-italic", c ? "bg-[#DCFCE7] text-sp-success" : "bg-[#FEF3C7] text-[#92400E]")}>{c ? "✓" : "!"}</i>{l}</span>)}
         </div>
         <span className="text-[13px] text-muted-foreground">Porsi boleh diisi nanti</span>
-        <Button variant="outline" aria-disabled={!canSave} disabled={busy} onClick={() => void saveDraft()}>Simpan sebagai draf</Button>
-        {slug && <Button variant="secondary" disabled={busy} onClick={() => void publish()}>Terbitkan</Button>}
+        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan sebagai draf</Button>
+        {slug && <Button variant="secondary" disabled={form.isSubmitting} onClick={() => { intent.current = "publish"; void form.submitForm(); }}>Terbitkan</Button>}
       </Card>
-    </div>
+    </form>
   );
 }
 

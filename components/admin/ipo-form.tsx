@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useFormik } from "formik";
 import { toast } from "sonner";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -11,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { createCompany, describeError, publishCompany, saveCompany, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { fieldOf } from "@/lib/formik-field";
 import { emptyIpoState, ipoFromForm, ipoToForm } from "@/lib/emiten-form";
 import { dec, fdShort, lembar, num, rp, scheduleError, stageIndex, type Dates } from "@/lib/ipo";
 import {
@@ -36,33 +38,55 @@ const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: { slug: string; name: string }[] }) {
   const [view, setView] = useState(loaded ?? null);
   const [s0] = useState(() => (loaded ? ipoFromForm(loaded.company.ticker, loaded.form) : emptyIpoState()));
-  const [name, setName] = useState(s0.name);
-  const [tk, setTk] = useState(s0.tk);
-  const [sektor, setSektor] = useState(s0.sektor);
-  const [sub, setSub] = useState(s0.sub);
-  const [papan, setPapan] = useState<string>(s0.papan);
-  const [shortSum, setShortSum] = useState(s0.shortSum);
-  const [longSum, setLongSum] = useState(s0.longSum);
-  const [dt, setDt] = useState<Dates>(s0.dt);
-  const [pLo, setPLo] = useState(s0.pLo);
-  const [pHi, setPHi] = useState(s0.pHi);
-  const [pFin, setPFin] = useState(s0.pFin);
-  const [shares, setShares] = useState(s0.shares);
-  const [porsi, setPorsi] = useState(s0.porsi);
-  const [uw, setUw] = useState<Item[]>(() => s0.uw.map((t) => withId({ t })));
-  const [wr, setWr] = useState(s0.wr);
-  const [wrRatio, setWrRatio] = useState(s0.wrRatio);
-  const [wrPrice, setWrPrice] = useState(s0.wrPrice);
-  const [ud, setUd] = useState<Item[]>(() => s0.ud.map((u) => withId(u)));
-  const [soon, setSoon] = useState(s0.soon);
-  const [auto, setAuto] = useState(s0.auto);
-  const [busy, setBusy] = useState(false);
-  const [apiTkErr, setApiTkErr] = useState("");
+  const [init] = useState(() => ({ ...s0, uw: s0.uw.map((t) => withId({ t })) as Item[], ud: s0.ud.map((u) => withId(u)) as Item[] }));
+  const intent = useRef<"draft" | "publish">("draft");
+  const form = useFormik({
+    initialValues: init,
+    validateOnChange: false,
+    validateOnBlur: false,
+    validate: (v) => {
+      const c = v.tk.trim().toUpperCase();
+      return { ...(!/^[A-Z]{4}$/.test(c) && { tk: !c ? "Kode saham wajib diisi." : "Kode saham harus 4 huruf." }), ...(!v.name.trim() && { name: "Nama perusahaan wajib diisi." }) }; // COPY: perlu review (nama)
+    },
+    onSubmit: async () => {
+      const publishing = intent.current === "publish";
+      intent.current = "draft";
+      const v = await save();
+      if (!v) return;
+      if (!publishing) return void toast(`Draf ${code} tersimpan. Belum tampil di aplikasi.`);
+      const r = await publishCompany(code); // publish uses the saved draft
+      if (!r.ok) return void toast(describeError(r.error));
+      setView(r.data);
+      toast(`${code} diterbitkan. Tampil di aplikasi sebagai “Segera IPO”.`);
+    },
+  });
+  const f = fieldOf(form);
+  const [name, setName] = f("name");
+  const [tk, setTk] = f("tk");
+  const [sektor, setSektor] = f("sektor");
+  const [sub, setSub] = f("sub");
+  const [papan, setPapan] = f("papan");
+  const [shortSum, setShortSum] = f("shortSum");
+  const [longSum, setLongSum] = f("longSum");
+  const [dt, setDt] = f("dt");
+  const [pLo, setPLo] = f("pLo");
+  const [pHi, setPHi] = f("pHi");
+  const [pFin, setPFin] = f("pFin");
+  const [shares, setShares] = f("shares");
+  const [porsi, setPorsi] = f("porsi");
+  const [uw, setUw] = f("uw");
+  const [wr, setWr] = f("wr");
+  const [wrRatio, setWrRatio] = f("wrRatio");
+  const [wrPrice, setWrPrice] = f("wrPrice");
+  const [ud, setUd] = f("ud");
+  const [soon, setSoon] = f("soon");
+  const [auto, setAuto] = f("auto");
+  const errs = form.errors as Record<string, string | undefined>;
   const [today] = useState(todayIso);
 
   const saved = !!view;
   const code = tk.trim().toUpperCase();
-  const tkErr = apiTkErr || (!code ? "Kode saham wajib diisi." : !/^[A-Z]{4}$/.test(code) ? "Kode saham harus 4 huruf." : "");
+  const tkErr = errs.tk || (!code ? "Kode saham wajib diisi." : !/^[A-Z]{4}$/.test(code) ? "Kode saham harus 4 huruf." : "");
   const idOk = !tkErr && !!name.trim() && !!sub.trim() && !!shortSum.trim() && shortSum.length <= 100 && !!longSum.trim() && longSum.length <= 400;
 
   const jdErr = scheduleError(dt);
@@ -105,27 +129,19 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
 
   // First save creates the company (POST); later saves replace the draft (PATCH). Both leave customers' view untouched.
   const save = async () => {
-    if (tkErr || !name.trim()) { toast("Isi nama dan kode saham yang valid dulu"); return null; }
     const r = view ? await saveCompany(code, currentForm()) : await createCompany({ ticker: code, ...currentForm() });
     if (!r.ok) {
-      if (r.error.code === "TICKER_TAKEN") setApiTkErr(r.error.fields?.ticker ?? r.error.message);
+      if (r.error.code === "TICKER_TAKEN") form.setFieldError("tk", r.error.fields?.ticker ?? r.error.message);
       toast(describeError(r.error));
       return null;
     }
     setView(r.data);
     return r.data;
   };
-  const saveDraft = async () => { setBusy(true); const v = await save(); setBusy(false); if (v) toast(`Draf ${code} tersimpan. Belum tampil di aplikasi.`); };
-  const publish = async () => {
+  const publish = () => {
     if (!canPublish) return toast(`Lengkapi dulu: ${checks.filter((c) => !c.ok).map((c) => c.label).join(", ")}`);
-    setBusy(true);
-    const v = await save(); // publish uses the saved draft
-    const r = v ? await publishCompany(code) : null;
-    setBusy(false);
-    if (!r) return;
-    if (!r.ok) return toast(describeError(r.error));
-    setView(r.data);
-    toast(`${code} diterbitkan. Tampil di aplikasi sebagai “Segera IPO”.`);
+    intent.current = "publish";
+    void form.submitForm();
   };
 
   const pub = view ? PUB[view.publishStatus.key] : null;
@@ -142,8 +158,8 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
       </div>
       <div className="flex items-center gap-2.5">
         <Link href="/admin/emiten" className={buttonVariants({ variant: "outline" })}>{saved ? "Kembali" : "Batal"}</Link>
-        <Button variant="outline" disabled={busy} onClick={() => void saveDraft()}>Simpan draf</Button>
-        <Button aria-disabled={!canPublish} disabled={busy} onClick={() => void publish()}>Terbitkan</Button>
+        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan draf</Button>
+        <Button aria-disabled={!canPublish} disabled={form.isSubmitting} onClick={publish}>Terbitkan</Button>
       </div>
     </div>
   );
@@ -174,6 +190,7 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
   ];
 
   return (
+    <form onSubmit={form.handleSubmit} noValidate>
     <EditorShell header={header} checks={checks} rail={rail}>
       <Section id="i-id" title="Identitas" desc="Sesuai prospektus. Kode saham diberikan BEI dan tidak boleh sama dengan emiten lain.">
         <div className="flex flex-wrap gap-5">
@@ -184,9 +201,10 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
           <div className="flex min-w-[260px] flex-1 flex-col gap-3.5">
             <div className="grid gap-3.5 sm:grid-cols-[1fr_140px]">
               <FormField label="Nama perusahaan" htmlFor="i-nm"><Input id="i-nm" aria-invalid={!name.trim()} value={name} onChange={(e) => setName(e.target.value)} placeholder="PT … Tbk" /></FormField>
-              <FormField label="Kode saham" htmlFor="i-tk"><Input id="i-tk" aria-invalid={!!tkErr} className="font-mono" value={tk} disabled={saved} onChange={(e) => { setTk(e.target.value.toUpperCase()); setApiTkErr(""); }} maxLength={4} autoComplete="off" placeholder="ABCD" /></FormField>
+              <FormField label="Kode saham" htmlFor="i-tk"><Input id="i-tk" aria-invalid={!!tkErr} className="font-mono" value={tk} disabled={saved} onChange={(e) => { setTk(e.target.value.toUpperCase()); form.setFieldError("tk", undefined); }} maxLength={4} autoComplete="off" placeholder="ABCD" /></FormField>
             </div>
             {tkErr && <Err>{tkErr}</Err>}
+            {errs.name && <Err>{errs.name}</Err>}
             <div className="grid gap-3.5 sm:grid-cols-2">
               <FormField label="Sektor IDX-IC" htmlFor="i-sk"><NativeSelect id="i-sk" value={sektor} onChange={(e) => setSektor(e.target.value)}><NativeSelectOption value="">Pilih sektor</NativeSelectOption>{sectors.map((x) => <NativeSelectOption key={x.slug} value={x.slug}>{x.name}</NativeSelectOption>)}</NativeSelect></FormField>
               <FormField label="Subsektor" htmlFor="i-ss"><Input id="i-ss" aria-invalid={!sub.trim()} value={sub} onChange={(e) => setSub(e.target.value)} placeholder="mis. Batu bara" /></FormField>
@@ -296,5 +314,6 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
         <Note icon={<Info aria-hidden />}>Bagian profil lainnya (angka utama, tren keuangan, struktur grup, tema) diisi lewat halaman edit setelah emiten tercatat di BEI.</Note>
       </Section>
     </EditorShell>
+    </form>
   );
 }
