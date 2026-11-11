@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useDebounced } from "@/hooks/use-debounced";
 import { toast } from "sonner";
 import { Download, Flag, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -24,12 +25,6 @@ const TABS: [ListTab, string][] = [["all", "Semua"], ["review", "Perlu ditinjau"
 const STATUS: Record<ListItem["status"], Tone> = { ok: "success", review: "warning", draft: "neutral", new: "info" };
 const AVATAR = ["#1C1917", "#92400E", "#1D4ED8", "#15803D", "#6D28D9", "#BE185D", "#0F766E", "#B45309"];
 const colorOf = (t: string) => AVATAR[[...t].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR.length]; // stable per ticker
-
-function useDebounced<T>(value: T, ms: number) {
-  const [d, setD] = useState(value);
-  useEffect(() => { const t = setTimeout(() => setD(value), ms); return () => clearTimeout(t); }, [value, ms]);
-  return d;
-}
 
 type Loaded = { key: string; data?: ListResponse; error?: ApiError };
 
