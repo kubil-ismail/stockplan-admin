@@ -1,17 +1,13 @@
 import assert from "node:assert/strict";
-import { can, ROLES, sensitiveModules, togglePerm } from "./permissions.ts";
+import { sensitiveModules, togglePerm, type ModuleDef } from "./permissions.ts";
 
-assert.equal(can("super", "acc", "delete"), true);
-assert.equal(can("data", "acc", "view"), false); // only super admin sees Akses
-assert.equal(can("tema", "tm", "edit"), true);
-assert.equal(can("tema", "tm", "publish"), false); // editor tema cannot publish
-assert.equal(can("support", "em", "edit"), false);
-assert.equal(can("nope", "em", "view"), false);
-assert.equal(can("super", "dash", "edit"), false); // dashboard only has "view"
+const mods: ModuleDef[] = [
+  { key: "em", name: "Data emiten", desc: "", actions: ["view", "edit"], sensitive: false },
+  { key: "usr", name: "Pengguna", desc: "", actions: ["view", "edit"], sensitive: true },
+];
 assert.deepEqual(togglePerm([], "publish", ["view", "edit", "publish"]), ["view", "publish"]); // adds view
 assert.deepEqual(togglePerm(["view", "edit"], "view", ["view", "edit"]), []); // removing view clears all
 assert.deepEqual(togglePerm(["view"], "delete", ["view"]), ["view"]); // unavailable action ignored
-assert.deepEqual(sensitiveModules(ROLES.find((r) => r.id === "view")!.perms), []);
-assert.deepEqual(sensitiveModules(ROLES.find((r) => r.id === "data")!.perms), []);
-assert.ok(sensitiveModules(ROLES.find((r) => r.id === "support")!.perms).includes("Pengguna"));
+assert.deepEqual(sensitiveModules({ usr: ["view"], em: ["view", "edit"] }, mods), []); // view only is not sensitive
+assert.deepEqual(sensitiveModules({ usr: ["view", "edit"] }, mods), ["Pengguna"]);
 console.log("permissions ok");

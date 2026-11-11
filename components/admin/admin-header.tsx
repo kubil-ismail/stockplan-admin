@@ -5,14 +5,16 @@ import { usePathname } from "next/navigation";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { ROLES } from "@/lib/permissions";
 import { ADMIN_NAV } from "./admin-sidebar";
 import { useAdmin } from "./session";
+
+// shortcut: /auth/me returns only the role id, so custom roles show their id; upgrade: have the API include the role name.
+const ROLE_NAME: Record<string, string> = { super: "Super admin", data: "Admin data", tema: "Editor tema", support: "Support", view: "Viewer" };
 
 export function AdminHeader() {
   const pathname = usePathname();
   const { admin } = useAdmin();
-  const roleName = ROLES.find((r) => r.id === admin.role)?.name ?? admin.role;
+  const roleName = ROLE_NAME[admin.role] ?? admin.role;
   const items = ADMIN_NAV.flatMap((g) => g.items);
   // longest matching nav entry, so /admin/emiten/BUMI still reads "Data emiten"
   const current = items.filter((i) => i.href !== "/admin" && (pathname === i.href || pathname.startsWith(i.href + "/"))).at(-1);

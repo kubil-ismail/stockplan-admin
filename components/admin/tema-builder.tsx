@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Check, ChevronDown, ChevronUp, GripVertical, MoreHorizontal, MousePointer2, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, GripVertical, MoreHorizontal, MousePointer2, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { logoOf } from "@/lib/emiten-data";
-import { checklist, moveEmiten, moveStage, removeEmiten, stagesOf, type Group, type Result, type Row, type Stage } from "@/lib/tema";
-import { ICONS, PALETTE, POOL, SECTORS, THEMES } from "@/lib/tema-data";
-import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
+import { useDebounced } from "@/hooks/use-debounced";
+import { describeError, listCompanies, type ListResponse } from "@/lib/admin-companies";
+import { createTheme, publishTheme, saveTheme, type ThemeView } from "@/lib/admin-themes";
+import { checklist, fromForm, moveEmiten, moveStage, parsePct, READY_MIN, removeEmiten, stagesOf, toForm, type Draft, type Group, type Result, type Row, type Stage } from "@/lib/tema";
+import { ICONS, PALETTE } from "@/lib/tema-data";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
@@ -19,61 +21,83 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { AffixInput, Counter, EntityAvatar, FormField, Help, SearchInput, Section } from "./form-ui";
+import { AffixInput, Counter, EntityAvatar, FormField, Help, SearchInput, Section, StatusBadge } from "./form-ui";
 
 type Drag = { kind: "em"; tk: string; from: number | null } | { kind: "st"; id: number } | null;
 const AVATAR = ["#15803D", "#1D4ED8", "#0F766E", "#92400E", "#6D28D9", "#1C1917", "#BE185D", "#B45309"];
 const pal = (g?: Group) => { const p = PALETTE[g?.c ?? "stone"]; return { bg: p[1], bar: p[2], soft: p[3], ink: p[4] }; };
-const KEYS = Object.keys(POOL);
+const colorOf = (t: string) => AVATAR[[...t].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR.length]; // stable per ticker
+type Info = Record<string, { name: string; logo?: string }>;
+// Same defaults as the API's DEFAULT_GROUPS (lib/themes.js); descriptions are required before publishing.
+const NEW_DRAFT: Draft = {
+  name: "", sectorSlug: "", description: "", drivers: [""], stages: [],
+  groups: [
+    { id: "hulu", t: "Hulu", d: "", ic: "mine", c: "amber" },
+    { id: "tengah", t: "Tengah", d: "", ic: "truck", c: "blue" },
+    { id: "hilir", t: "Hilir", d: "", ic: "bolt", c: "green" },
+  ],
+};
 const ICON_D = Object.fromEntries(ICONS.map((i) => [i[0], i[2]]));
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
   <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
 );
 
-const Avatar = ({ tk }: { tk: string }) => <EntityAvatar code={tk} logo={logoOf(tk)} size={32} color={AVATAR[KEYS.indexOf(tk) % AVATAR.length]} />;
+const Avatar = ({ tk, logo }: { tk: string; logo?: string }) => <EntityAvatar code={tk} logo={logo} size={32} color={colorOf(tk)} />;
 
-// shortcut: starts from the design's "Energi terbarukan" example; start empty and POST /admin/api/themes on save.
-export function TemaBuilder() {
-  const [name, setName] = useState("Energi terbarukan");
-  const [sektor, setSektor] = useState("Energi");
-  const [desc, setDesc] = useState("Perusahaan yang membangun dan menjual listrik dari panas bumi, air, dan matahari.");
-  const [groups, setGroups] = useState<Group[]>([
-    { id: "g1", t: "Pembangkit", d: "Menghasilkan listrik dari panas bumi, air, dan matahari.", ic: "leaf", c: "green" },
-    { id: "g2", t: "Peralatan", d: "Membuat dan memasang panel surya serta turbin.", ic: "factory", c: "blue" },
-    { id: "g3", t: "Konstruksi", d: "Membangun pembangkit untuk pemilik proyek.", ic: "store", c: "amber" },
-  ]);
-  const [gOpen, setGOpen] = useState<Record<string, boolean>>({ g2: true });
-  const [stages, setStages] = useState<Stage[]>([
-    { id: 1, name: "Pengembang panas bumi", g: "g1", desc: "Mengebor uap panas bumi dan menjual listriknya ke PLN.", rows: [{ tk: "PGEO", p: "100" }, { tk: "BREN", p: "" }] },
-    { id: 2, name: "Pembangkit air (PLTA & PLTM)", g: "g1", desc: "Membangun bendungan atau PLTM dan menjual listriknya.", rows: [{ tk: "ARKO", p: "" }, { tk: "KEEN", p: "" }, { tk: "JSKY", p: "" }] },
-    { id: 3, name: "Panel & PLTS atap", g: "g2", desc: "", rows: [] },
-  ]);
-  const [nid, setNid] = useState(4);
-  const [gid, setGid] = useState(4);
+type Pool = { key: string; data?: ListResponse; error?: string };
+
+/** No `view` = new theme (POST on first save, then the edit page); with `view` = edit (PATCH, publish). */
+export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; sectors: { slug: string; name: string }[] }) {
+  const router = useRouter();
+  const [d0] = useState<Draft>(() => (loaded ? fromForm(loaded.form) : NEW_DRAFT));
+  const [view, setView] = useState(loaded);
+  const [name, setName] = useState(d0.name);
+  const [sektor, setSektor] = useState(d0.sectorSlug);
+  const [desc, setDesc] = useState(d0.description);
+  const [drivers, setDrivers] = useState(d0.drivers.length ? d0.drivers : [""]);
+  const [groups, setGroups] = useState<Group[]>(d0.groups);
+  const [gOpen, setGOpen] = useState<Record<string, boolean>>({});
+  const [stages, setStages] = useState<Stage[]>(d0.stages);
+  const [nid, setNid] = useState(d0.stages.length + 1);
+  const [info, setInfo] = useState<Info>(() => Object.fromEntries((loaded?.companies ?? []).map((c) => [c.ticker, { name: c.name, logo: c.logoUrl ?? undefined }])));
+  const [nameErr, setNameErr] = useState("");
+  const [busy, setBusy] = useState(false);
   const [pq, setPq] = useState("");
   const [psec, setPsec] = useState("");
+  const [pool, setPool] = useState<Pool | null>(null);
   const [drag, setDrag] = useState<Drag>(null);
   const [over, setOver] = useState<string | null>(null);
-  const [created, setCreated] = useState(false);
+  const slug = view?.theme.slug;
+
+  // Emiten pool = Data emiten search, keyed by its filters so "loading" is derived.
+  const dpq = useDebounced(pq.trim(), 300);
+  const pkey = `${dpq}|${psec}`;
+  useEffect(() => {
+    let live = true;
+    void listCompanies({ q: dpq, sector: psec, pageSize: 30 }).then((r) => { if (live) setPool({ key: pkey, data: r.ok ? r.data : undefined, error: r.ok ? undefined : r.error.message }); });
+    return () => { live = false; };
+  }, [pkey, dpq, psec]);
+  const poolItems = pool?.data?.items ?? [];
 
   const gById = Object.fromEntries(groups.map((g) => [g.id, g]));
   const endDrag = () => { setDrag(null); setOver(null); };
+  const learn = (tk: string) => { const c = poolItems.find((x) => x.ticker === tk); if (c) setInfo((i) => ({ ...i, [tk]: { name: c.name, logo: c.logoUrl ?? undefined } })); };
   const apply = (r: Result) => { if ("error" in r) { if (r.error) toast(r.error); return; } setStages(r.stages); toast(r.msg); };
 
   const nG = groups.length;
   const updG = (id: string, o: Partial<Group>) => setGroups(groups.map((g) => (g.id === id ? { ...g, ...o } : g)));
   const moveG = (i: number, d: number) => { const a = groups.slice(); const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; setGroups(a); };
   const updS = (id: number, o: Partial<Stage>) => setStages(stages.map((s) => (s.id === id ? { ...s, ...o } : s)));
-  const updRow = (sid: number, tk: string, p: string) => setStages(stages.map((s) => (s.id === sid ? { ...s, rows: s.rows.map((r) => (r.tk === tk ? { ...r, p } : r)) } : s)));
+  const updRow = (sid: number, tk: string, o: Partial<Row>) => setStages(stages.map((s) => (s.id === sid ? { ...s, rows: s.rows.map((r) => (r.tk === tk ? { ...r, ...o } : r)) } : s)));
+  const newKey = () => { let i = groups.length + 1; while (groups.some((g) => g.id === `g${i}`)) i += 1; return `g${i}`; };
 
-  const groupsOk = groups.length > 0 && groups.every((g) => g.t.trim() && g.d.trim() && g.t.length <= 20 && g.d.length <= 80);
-  const dup = THEMES.some((t) => t.name.toLowerCase() === name.trim().toLowerCase());
-  const checks = checklist({ name, dup, stages, groupsOk });
-  const ok = checks.every((c) => c[1]) && desc.length <= 160;
+  const draft: Draft = { name, sectorSlug: sektor, description: desc, drivers, groups, stages };
+  const checks = [...checklist(draft), ...(view ? [[`Kesiapan emiten ≥ ${READY_MIN}%`, view.readiness.percent >= READY_MIN] as [string, boolean]] : [])];
+  const badPct = stages.some((s) => s.rows.some((r) => { const v = parsePct(r.p); return v !== null && !(v >= 0 && v <= 100); }));
+  // Drafts may be incomplete (the API only checks structure); completeness gates publishing.
+  const canSave = name.trim().length >= 3 && !!sektor && desc.length <= 160 && !badPct;
   const used = new Set(stages.flatMap((s) => s.rows.map((r) => r.tk)));
-
-  const needle = pq.trim().toLowerCase();
-  const pool = KEYS.filter((k) => (!needle || `${k} ${POOL[k][0]}`.toLowerCase().includes(needle)) && (!psec || POOL[k][1] === psec));
+  const poolLoading = !pool || pool.key !== pkey;
   const poolDz = drag?.kind === "em" && drag.from !== null;
 
   const dragProps = (d: Drag) => ({
@@ -87,41 +111,67 @@ export function TemaBuilder() {
     onDrop: (e: React.DragEvent) => { e.preventDefault(); if (drag && accept) onDrop(); endDrag(); },
   });
 
-  const save = () => {
-    if (!ok) return toast(`Belum bisa disimpan: ${(checks.find((c) => !c[1])?.[0] ?? "deskripsi terlalu panjang").toLowerCase()}`);
-    setCreated(true);
-    toast(`Draf tema ${name.trim()} tersimpan`);
+  const save = async () => {
+    if (!canSave) { toast(badPct ? "Porsi harus angka 0–100" : "Isi nama tema (minimal 3 huruf) dan pilih sektor dulu"); return null; } // COPY: perlu review
+    const form = toForm(draft);
+    const r = slug ? await saveTheme(slug, form) : await createTheme(form);
+    if (!r.ok) { setNameErr(r.error.fields?.name ?? ""); toast(describeError(r.error)); return null; }
+    setNameErr("");
+    setView(r.data);
+    return r.data;
+  };
+  const saveDraft = async () => {
+    setBusy(true);
+    const v = await save();
+    setBusy(false);
+    if (!v) return;
+    toast(`Draf tema ${v.form.name} tersimpan`);
+    if (!slug) router.replace(`/admin/tema/${v.theme.slug}`);
+  };
+  const publish = async () => {
+    setBusy(true);
+    const v = await save(); // publish uses the saved draft
+    const r = v ? await publishTheme(v.theme.slug) : null;
+    setBusy(false);
+    if (!r) return;
+    if (!r.ok) return toast(describeError(r.error));
+    setView(r.data);
+    toast(`Tema ${r.data.form.name} diterbitkan`); // COPY: perlu review
   };
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="text-[26px] leading-tight font-bold tracking-tight">Tambah tema</h1>
+          <h1 className="flex items-center gap-3 text-[26px] leading-tight font-bold tracking-tight">{slug ? "Edit tema" : "Tambah tema"}{view && <StatusBadge tone={view.theme.published ? "success" : "neutral"}>{view.theme.statusLabel}</StatusBadge>}</h1>
           <p className="text-muted-foreground">Isi identitasnya, lalu susun rantai nilai dengan menarik emiten ke tiap tahap.</p>
         </div>
-        <Link href="/admin/tema" className={buttonVariants({ variant: "outline" })}>Batal</Link>
+        <Link href="/admin/tema" className={buttonVariants({ variant: "outline" })}>{slug ? "Kembali" : "Batal"}</Link>
       </div>
-
-      {created && (
-        <Alert role="status" variant="success">
-          <Check aria-hidden />
-          <AlertDescription className="pr-44"><b>{name}</b> tersimpan sebagai draf. Lanjutkan isi porsi dan sumber pendapatan di halaman tema.</AlertDescription>
-          <AlertAction><Link href="/admin/tema/batubara" className={buttonVariants({ variant: "secondary", size: "sm" })}>Buka halaman tema</Link></AlertAction>
-        </Alert>
-      )}
 
       <Section id="t-id" title="1 · Identitas tema" desc="Tampil di kartu tema dan di atas peta rantai nilai.">
         <div className="grid gap-3.5 sm:grid-cols-[1fr_260px]">
           <FormField label="Nama tema" htmlFor="n-n">
-            <Input id="n-n" aria-invalid={dup} value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Energi terbarukan" />
-            {dup && <Help className="text-(--sp-danger-text)">Tema dengan nama ini sudah ada.</Help>}
+            <Input id="n-n" aria-invalid={!!nameErr} value={name} onChange={(e) => { setName(e.target.value); setNameErr(""); }} placeholder="mis. Energi terbarukan" />
+            {nameErr && <Help className="text-(--sp-danger-text)">{nameErr}</Help>}
           </FormField>
-          <FormField label="Sektor IDX-IC" htmlFor="n-s"><NativeSelect id="n-s" value={sektor} onChange={(e) => setSektor(e.target.value)}>{SECTORS.map((s) => <NativeSelectOption key={s}>{s}</NativeSelectOption>)}</NativeSelect></FormField>
+          <FormField label="Sektor IDX-IC" htmlFor="n-s"><NativeSelect id="n-s" value={sektor} onChange={(e) => setSektor(e.target.value)}><NativeSelectOption value="">Pilih sektor…</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect></FormField>
         </div>
         <FormField label="Deskripsi singkat" htmlFor="n-d">
           <Textarea id="n-d" aria-invalid={desc.length > 160} className="min-h-16" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Satu kalimat: bisnis apa saja yang masuk tema ini." />
           <div className="flex justify-between gap-3"><Help>Bisa diubah lagi setelah draf dibuat.</Help><Counter n={desc.length} max={160} /></div>
+        </FormField>
+        {/* COPY: perlu review (label, petunjuk, tombol): "Pendorong utama" ada di API tapi belum di desain. */}
+        <FormField label="Pendorong utama">
+          <Help>Faktor yang menggerakkan tema ini. Minimal satu sebelum diterbitkan.</Help>
+          {drivers.map((x, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input aria-label={`Pendorong ${i + 1}`} aria-invalid={x.length > 100} value={x} onChange={(e) => setDrivers(drivers.map((v, j) => (j === i ? e.target.value : v)))} placeholder="mis. Harga batu bara acuan" />
+              <Counter n={x.length} max={100} />
+              <Button variant="ghost" size="icon-sm" aria-label={`Hapus pendorong ${i + 1}`} onClick={() => setDrivers(drivers.length > 1 ? drivers.filter((_, j) => j !== i) : [""])}><Trash2 /></Button>
+            </div>
+          ))}
+          {drivers.length < 10 && <Button variant="outline" size="sm" className="self-start" onClick={() => setDrivers([...drivers, ""])}><Plus aria-hidden />Tambah pendorong</Button>}
         </FormField>
       </Section>
 
@@ -167,7 +217,7 @@ export function TemaBuilder() {
             );
           })}
         </div>
-        <Button variant="outline" className="h-11 w-full border-dashed" onClick={() => { const id = `g${gid}`; setGroups([...groups, { id, t: "", d: "", ic: "factory", c: "violet" }]); setGid(gid + 1); setGOpen({ ...gOpen, [id]: true }); }}><Plus aria-hidden />Tambah tahap utama</Button>
+        <Button variant="outline" className="h-11 w-full border-dashed" onClick={() => { const id = newKey(); setGroups([...groups, { id, t: "", d: "", ic: "factory", c: "violet" }]); setGOpen({ ...gOpen, [id]: true }); }}><Plus aria-hidden />Tambah tahap utama</Button>
       </Section>
 
       <Section id="t-rn" title="3 · Susun rantai nilai" desc="Tiap tahap butuh nama, deskripsi singkat, dan tahap utamanya. Satu emiten boleh ada di lebih dari satu tahap.">
@@ -185,24 +235,26 @@ export function TemaBuilder() {
             <CardHeader className="gap-2.5">
               <b className="text-sm font-semibold">Emiten</b>
               <SearchInput label="Cari emiten" placeholder="Cari kode atau nama" value={pq} onChange={setPq} className="min-w-0" />
-              <NativeSelect size="sm" aria-label="Filter sektor emiten" value={psec} onChange={(e) => setPsec(e.target.value)}><NativeSelectOption value="">Semua sektor</NativeSelectOption><NativeSelectOption>Energi</NativeSelectOption><NativeSelectOption>Infrastruktur</NativeSelectOption><NativeSelectOption>Perindustrian</NativeSelectOption></NativeSelect>
+              <NativeSelect size="sm" aria-label="Filter sektor emiten" value={psec} onChange={(e) => setPsec(e.target.value)}><NativeSelectOption value="">Semua sektor</NativeSelectOption>{sectors.map((x) => <NativeSelectOption key={x.slug} value={x.slug}>{x.name}</NativeSelectOption>)}</NativeSelect>
             </CardHeader>
-            <CardContent className="flex max-h-[560px] flex-col gap-1.5 overflow-y-auto">
-              {pool.map((k) => {
-                const at = stagesOf(stages, k);
+            <CardContent aria-busy={poolLoading} className={cn("flex max-h-[560px] flex-col gap-1.5 overflow-y-auto", poolLoading && pool && "opacity-50")}>
+              {poolItems.map((c) => {
+                const k = c.ticker, at = stagesOf(stages, k);
                 return (
                   <Card key={k} size="sm" {...dragProps({ kind: "em", tk: k, from: null })} title={at.length ? `${k} sudah di tahap ${at.join(", ")}. Tarik lagi untuk menambah ke tahap lain.` : `Tarik ${k} ke salah satu tahap`}
                     className={cn("cursor-grab flex-row items-center gap-2 px-1.5 py-1.5 active:cursor-grabbing", drag?.kind === "em" && drag.tk === k && drag.from === null && "opacity-40")}>
                     <GripVertical aria-hidden className="size-3.5 flex-none text-sp-faint" />
-                    <Avatar tk={k} />
-                    <span className="flex min-w-0 flex-1 flex-col leading-tight"><b className="font-mono text-[12.5px]">{k}</b><em className="truncate text-xs text-muted-foreground not-italic">{POOL[k][0]}</em></span>
+                    <Avatar tk={k} logo={c.logoUrl ?? undefined} />
+                    <span className="flex min-w-0 flex-1 flex-col leading-tight"><b className="font-mono text-[12.5px]">{k}</b><em className="truncate text-xs text-muted-foreground not-italic">{c.name}</em></span>
                     <span className={cn("text-[11px] whitespace-nowrap", at.length ? "font-semibold text-sp-ink-2" : "text-sp-faint")}>{at.length ? `Tahap ${at.join(", ")}` : "Belum"}</span>
                   </Card>
                 );
               })}
-              {!pool.length && <Help>Tidak ada emiten yang cocok.</Help>}
+              {pool?.error && <Help className="text-(--sp-danger-text)">{pool.error}</Help>}
+              {!poolLoading && !pool?.error && !poolItems.length && <Help>Tidak ada emiten yang cocok.</Help>}
+              {poolLoading && !pool?.error && <Help>Memuat emiten…</Help>}
             </CardContent>
-            <CardFooter className="bg-transparent px-3 py-2 text-xs">{poolDz ? "Lepas di sini untuk mengeluarkan dari tahap" : `${used.size} emiten dipakai · ${KEYS.length} di daftar`}</CardFooter>
+            <CardFooter className="bg-transparent px-3 py-2 text-xs">{poolDz ? "Lepas di sini untuk mengeluarkan dari tahap" : `${used.size} emiten dipakai${pool?.data ? ` · ${pool.data.total.toLocaleString("id-ID")} di daftar` : ""}`}</CardFooter>
           </Card>
 
           <div className="flex items-start gap-4">
@@ -214,7 +266,7 @@ export function TemaBuilder() {
               const miss = s.rows.filter((r) => !r.p.trim()).length;
               return (
                 <Card key={s.id} size="sm" aria-label={`Tahap ${i + 1}${s.name ? `: ${s.name}` : ""}`}
-                  {...dropProps(key, !!dz, () => { if (drag?.kind === "em") apply(moveEmiten(stages, drag.tk, drag.from, s.id)); else if (drag?.kind === "st") { const n = moveStage(stages, drag.id, s.id); if (n) setStages(n); } })}
+                  {...dropProps(key, !!dz, () => { if (drag?.kind === "em") { if (drag.from === null) learn(drag.tk); apply(moveEmiten(stages, drag.tk, drag.from, s.id)); } else if (drag?.kind === "st") { const n = moveStage(stages, drag.id, s.id); if (n) setStages(n); } })}
                   className={cn("w-[250px] flex-none gap-3 bg-accent shadow-none", dz && (over === key ? "border-foreground bg-[#FFFBF2]" : "border-dashed border-sp-faint"), drag?.kind === "st" && drag.id === s.id && "opacity-50")}
                   style={{ boxShadow: `inset 0 3px 0 ${pal(gById[s.g]).bar}` }}>
                   <CardContent className="flex flex-col gap-3">
@@ -233,7 +285,7 @@ export function TemaBuilder() {
 
                     <div className="flex min-h-[120px] flex-col gap-2">
                       {s.rows.map((r) => <EmitenCard key={r.tk} row={r} stage={s} stageIdx={i} stages={stages} dragging={drag?.kind === "em" && drag.tk === r.tk && drag.from === s.id}
-                        dragProps={dragProps({ kind: "em", tk: r.tk, from: s.id })} onPortion={(p) => updRow(s.id, r.tk, p)}
+                        dragProps={dragProps({ kind: "em", tk: r.tk, from: s.id })} info={info[r.tk]} onRow={(o) => updRow(s.id, r.tk, o)}
                         onMove={(to) => apply(moveEmiten(stages, r.tk, s.id, to))} onRemove={() => apply(removeEmiten(stages, r.tk, s.id))} />)}
                       {!s.rows.length && (
                         <div className="flex flex-1 flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-input px-3 py-6 text-center text-[13px] text-muted-foreground"><MousePointer2 aria-hidden className="size-4" />{dzEm ? "Lepas di sini" : "Tarik emiten ke sini"}</div>
@@ -254,22 +306,23 @@ export function TemaBuilder() {
           {checks.map(([l, c]) => <span key={l} className="inline-flex items-center gap-1.5"><i aria-hidden className={cn("inline-flex size-[18px] items-center justify-center rounded-full text-[10px] font-bold not-italic", c ? "bg-[#DCFCE7] text-sp-success" : "bg-[#FEF3C7] text-[#92400E]")}>{c ? "✓" : "!"}</i>{l}</span>)}
         </div>
         <span className="text-[13px] text-muted-foreground">Porsi boleh diisi nanti</span>
-        <Button variant="secondary" aria-disabled={!ok} onClick={save}>Simpan sebagai draf</Button>
+        <Button variant="outline" aria-disabled={!canSave} disabled={busy} onClick={() => void saveDraft()}>Simpan sebagai draf</Button>
+        {slug && <Button variant="secondary" disabled={busy} onClick={() => void publish()}>Terbitkan</Button>}
       </Card>
     </div>
   );
 }
 
-function EmitenCard({ row, stage, stageIdx, stages, dragging, dragProps, onPortion, onMove, onRemove }: {
-  row: Row; stage: Stage; stageIdx: number; stages: Stage[]; dragging: boolean; dragProps: object;
-  onPortion: (p: string) => void; onMove: (to: number) => void; onRemove: () => void;
+function EmitenCard({ row, stage, stageIdx, stages, dragging, dragProps, info, onRow, onMove, onRemove }: {
+  row: Row; stage: Stage; stageIdx: number; stages: Stage[]; dragging: boolean; dragProps: object; info?: Info[string];
+  onRow: (o: Partial<Row>) => void; onMove: (to: number) => void; onRemove: () => void;
 }) {
   return (
     <Card size="sm" {...dragProps} className={cn("cursor-grab gap-2 px-2 py-2 active:cursor-grabbing", dragging && "opacity-40")}>
       <div className="flex items-center gap-2">
         <GripVertical aria-hidden className="size-3.5 flex-none text-sp-faint" />
-        <Avatar tk={row.tk} />
-        <span className="flex min-w-0 flex-1 flex-col leading-tight"><b className="font-mono text-[12.5px]">{row.tk}</b><em className="truncate text-xs text-muted-foreground not-italic">{POOL[row.tk]?.[0]}</em></span>
+        <Avatar tk={row.tk} logo={info?.logo} />
+        <span className="flex min-w-0 flex-1 flex-col leading-tight"><b className="font-mono text-[12.5px]">{row.tk}</b><em className="truncate text-xs text-muted-foreground not-italic">{info?.name}</em></span>
         <DropdownMenu>
           <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label={`Pindahkan ${row.tk}`} />}><MoreHorizontal /></DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-52">
@@ -283,8 +336,10 @@ function EmitenCard({ row, stage, stageIdx, stages, dragging, dragProps, onPorti
         </DropdownMenu>
       </div>
       <Label className="justify-end text-xs font-normal text-muted-foreground">Porsi
-        <AffixInput suffix="%" className="h-8 w-24" inputMode="decimal" aria-label={`Porsi ${row.tk} di tahap ${stageIdx + 1}`} placeholder="—" value={row.p} onChange={(e) => onPortion(e.target.value)} />
+        <AffixInput suffix="%" className="h-8 w-24" inputMode="decimal" aria-label={`Porsi ${row.tk} di tahap ${stageIdx + 1}`} placeholder="—" value={row.p} onChange={(e) => onRow({ p: e.target.value })} />
       </Label>
+      {/* COPY: perlu review: placeholder sumber porsi (API mewajibkan sumber sebelum terbit). */}
+      <Input className="h-8 text-xs" aria-label={`Sumber porsi ${row.tk} di tahap ${stageIdx + 1}`} placeholder="Sumber, mis. laporan tahunan 2025" maxLength={200} value={row.src ?? ""} onChange={(e) => onRow({ src: e.target.value })} />
     </Card>
   );
 }

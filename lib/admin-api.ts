@@ -37,6 +37,7 @@ const post = <T>(path: string, body?: unknown) => send<T>("POST")(path, body);
 export const adminGet = <T>(path: string) => call<T>(path);
 export const adminPost = post;
 export const adminPatch = <T>(path: string, body: unknown) => send<T>("PATCH")(path, body);
+export const adminPut = <T>(path: string, body: unknown) => send<T>("PUT")(path, body);
 
 /** For non-JSON downloads (CSV). */
 export async function adminBlob(path: string): Promise<Result<Blob>> {
