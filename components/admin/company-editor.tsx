@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { getCompany, listCompanies, type EditView } from "@/lib/admin-companies";
+import { getCompany, listCompanies, type CompanySector, type EditView } from "@/lib/admin-companies";
 import type { ApiError } from "@/lib/admin-api";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -11,7 +11,7 @@ import { EditorSkeleton } from "./editor-skeleton";
 import { EmitenEditForm } from "./emiten-edit-form";
 import { IpoForm } from "./ipo-form";
 
-type Sectors = { slug: string; name: string }[];
+type Sectors = CompanySector[];
 type Loaded = { key: string; sectors?: Sectors; view?: EditView; error?: ApiError };
 
 /**

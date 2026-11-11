@@ -803,6 +803,16 @@
     "state": "Edit tema + kelola tahap utama"
   },
   {
+    "board": "AdminSektor",
+    "title": "02.f · Admin Sektor & sub sektor",
+    "width": 1440,
+    "height": 1200,
+    "source": "design/screens/AdminSektor.dc.html",
+    "route": "/admin/sektor",
+    "target": "app/admin/(panel)/sektor/page.tsx",
+    "state": "Kelola sektor dan sub-sektor: tambah, ubah nama, hapus"
+  },
+  {
     "board": "AdminPengguna",
     "title": "04.a · Admin: Pengguna",
     "width": 1440,

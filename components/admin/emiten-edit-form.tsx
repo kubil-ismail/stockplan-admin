@@ -14,7 +14,9 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "@/co
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { describeError, publishCompany, saveCompany, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { describeError, publishCompany, saveCompany, type CompanySector, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { SubsectorSelect, subFor } from "./subsector-select";
+import { DeleteCompany } from "./delete-company";
 import { fieldOf } from "@/lib/formik-field";
 import { fmtWhen } from "@/lib/format";
 import { dec, num } from "@/lib/ipo";
@@ -43,10 +45,10 @@ const MT: readonly [MetricId, string, string][] = [["sales", "Penjualan", "Rp tr
 const PG = [["str", "Kekuatan", "#16A34A"], ["weak", "Kelemahan", "#DC2626"], ["mon", "Yang dipantau", "#F59E0B"]] as const;
 const REV_COL = ["#1C1917", "#FEA722", "#A8A29E", "#78716C", "#D6D3D1"];
 const LV: Record<LvKey, string> = { h: "Tinggi", m: "Sedang", l: "Rendah" };
-const PUB: Record<PublishKey, [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Draf tersimpan", "neutral"], published: ["Terbit", "success"] };
+const PUB: Record<PublishKey, [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Diarsipkan", "neutral"], published: ["Terbit", "success"] };
 const MAX_PERIODS = 6; // backend limit
 
-export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sectors: { slug: string; name: string }[] }) {
+export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sectors: CompanySector[] }) {
   const [view, setView] = useState(loaded);
   const [p0] = useState(() => profileFromForm(loaded.form)); // initial values; edited copies live in the states below
   const code = view.company.ticker;
@@ -66,7 +68,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
       intent.current = "draft";
       const v = await save();
       if (!v) return;
-      if (!publishing) return void toast("Draf tersimpan. Pengguna masih melihat versi yang sudah terbit.");
+      if (!publishing) return void toast("Tersimpan ke arsip. Pengguna masih melihat versi yang sudah terbit.");
       const r = await publishCompany(code); // publish uses the saved draft, so unsaved edits go first
       if (!r.ok) return void toast(describeError(r.error));
       setView(r.data);
@@ -144,6 +146,9 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
     { group: "Konteks", label: "Tema & Industri", ok: true, href: "#s-tema", note: "Modul Tema" },
   ];
   const canPub = checks.every((c) => c.ok);
+  // Nothing to publish while the form equals the saved version and no unpublished archive entry is pending.
+  const [baseline, setBaseline] = useState(() => JSON.stringify(init));
+  const pending = JSON.stringify(form.values) !== baseline || view.hasDraft || !view.published;
   const sectorName = sectors.find((x) => x.slug === sektor)?.name ?? "Tanpa sektor";
 
   const currentForm = () => profileToForm({
@@ -158,6 +163,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
     if (!r.ok) { toast(describeError(r.error)); return null; }
     setView(r.data);
     discardDraft();
+    setBaseline(JSON.stringify(form.values));
     return r.data;
   };
   const publish = () => {
@@ -179,8 +185,9 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
       </div>
       <div className="flex flex-wrap items-center gap-2.5">
         <Link href={`/emiten/${code}`} className={buttonVariants({ variant: "outline" })}><ExternalLink aria-hidden />Lihat di aplikasi</Link>
-        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan draf</Button>
-        <Button aria-disabled={!canPub} disabled={form.isSubmitting} onClick={publish}>Terbitkan</Button>
+        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan ke arsip</Button>
+        <Button aria-disabled={!canPub} disabled={form.isSubmitting || !pending} onClick={publish}>Terbitkan</Button>
+        <DeleteCompany ticker={code} published={view.published} onDeleted={discardDraft} />
       </div>
     </div>
   );
@@ -191,7 +198,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
       <CardContent className="flex flex-col gap-1.5 text-[13px] leading-snug">
         <span><b className="font-semibold">{view.updatedBy}</b></span>
         <time className="text-xs text-muted-foreground">{fmtWhen(view.updatedAt)}</time>
-        {view.hasDraft && view.published && <Help>Ada draf yang belum diterbitkan. Pengguna masih melihat versi sebelumnya.</Help>}
+        {view.hasDraft && view.published && <Help>Ada arsip yang belum diterbitkan. Pengguna masih melihat versi sebelumnya.</Help>}
       </CardContent>
     </Card>
   );
@@ -230,8 +237,8 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
           </div>
         </div>
         <div className="grid gap-3.5 border-t border-sp-line-soft pt-3.5 sm:grid-cols-3">
-          <FormField label="Sektor IDX-IC"><NativeSelect aria-label="Sektor IDX-IC" value={sektor} onChange={(e) => setSektor(e.target.value)}><NativeSelectOption value="">Pilih sektor</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect></FormField>
-          <FormField label="Subsektor"><Input aria-label="Subsektor" aria-invalid={!sub.trim()} value={sub} onChange={(e) => setSub(e.target.value)} placeholder="mis. Batu bara" /></FormField>
+          <FormField label="Sektor IDX-IC"><NativeSelect aria-label="Sektor IDX-IC" value={sektor} onChange={(e) => { setSektor(e.target.value); setSub(subFor(sectors, e.target.value, sub)); }}><NativeSelectOption value="">Pilih sektor</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect></FormField>
+          <FormField label="Subsektor"><SubsectorSelect sectors={sectors} sector={sektor} value={sub} onChange={setSub} invalid={!sub.trim()} /></FormField>
           <FormField label="Status data"><span className="flex h-11 items-center text-sm">{view.published ? "Pernah terbit" : "Belum pernah terbit"}</span></FormField>
         </div>
         {!sub.trim() && <Err>Subsektor wajib diisi.</Err>}

@@ -1,5 +1,5 @@
 // Typed client for /admin/api/companies (backend: routes/adminCompanies.js, lib/adminCompanies.js).
-import { adminBlob, adminGet, adminPatch, adminPost, type ApiError, type Result } from "./admin-api";
+import { adminBlob, adminDelete, adminGet, adminPatch, adminPost, type ApiError, type Result } from "./admin-api";
 
 export type Trading = "active" | "suspended" | "monitoring" | "delisted";
 export type Level = "high" | "medium" | "low";
@@ -50,7 +50,8 @@ export type ListItem = {
   completeness: { done: number; total: number; missing: string[] };
   theme: string; status: "ok" | "review" | "draft" | "new"; statusLabel: string; reportCount: number; hasDraft: boolean; updatedAt: string; updatedBy: string;
 };
-export type ListResponse = { total: number; page: number; pageSize: number; tabs: Record<ListTab, number>; sectors: { slug: string; name: string }[]; items: ListItem[] };
+export type CompanySector = { slug: string; name: string; subsectors: { id: string; name: string }[] };
+export type ListResponse = { total: number; page: number; pageSize: number; tabs: Record<ListTab, number>; sectors: CompanySector[]; items: ListItem[] };
 export type ListParams = { q?: string; tab?: ListTab; sector?: string; page?: number; pageSize?: number };
 
 export const listCompanies = (p: ListParams = {}) => {
@@ -65,6 +66,7 @@ export const listCompanies = (p: ListParams = {}) => {
 export const getCompany = (ticker: string) => adminGet<EditView>(`/companies/${encodeURIComponent(ticker)}`);
 export const createCompany = (body: Partial<CompanyForm> & { ticker: string }) => adminPost<EditView>("/companies", body);
 export const saveCompany = (ticker: string, form: Partial<CompanyForm>) => adminPatch<EditView>(`/companies/${encodeURIComponent(ticker)}`, form);
+export const deleteCompany = (ticker: string) => adminDelete(`/companies/${encodeURIComponent(ticker)}`);
 export const publishCompany = (ticker: string) => adminPost<EditView>(`/companies/${encodeURIComponent(ticker)}/publish`);
 export const bulkReview = (tickers: string[]) => adminPost<{ updated: number }>("/companies/bulk-review", { tickers });
 export const exportCompaniesCsv = (tickers?: string[]) => adminBlob(`/companies/export.csv${tickers?.length ? `?tickers=${tickers.join(",")}` : ""}`);

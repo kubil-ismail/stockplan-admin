@@ -280,6 +280,7 @@ Kolom **Board** = nama file di `design/screens/` dan `design/screenshots/`. Boar
 | `AdminTema` | 03.a · Admin: Tema & rantai nilai | `/admin/tema` | `app/admin/(panel)/tema/page.tsx` | Daftar tema |
 | `AdminTemaBaru` | 03.c · Admin: Tambah tema (drag & drop) | `/admin/tema/baru` | `app/admin/(panel)/tema/baru/page.tsx` | Tambah tema, drag & drop emiten |
 | `AdminTemaEdit` | 03.b · Admin: Edit tema (Batubara) | `/admin/tema/[slug]` | `app/admin/(panel)/tema/[slug]/page.tsx` | Edit tema + kelola tahap utama |
+| `AdminSektor` | 02.f · Admin Sektor & sub sektor | `/admin/sektor` | `app/admin/(panel)/sektor/page.tsx` | Kelola sektor dan sub-sektor: tambah, ubah nama, hapus |
 | `AdminPengguna` | 04.a · Admin: Pengguna | `/admin/pengguna` | `app/admin/(panel)/pengguna/page.tsx` | Tabel + panel detail + tangguhkan |
 | `AdminMasukan` | 04.b · Admin: Masukan & laporan | `/admin/masukan` | `app/admin/(panel)/masukan/page.tsx` | Inbox tiket + thread |
 | `AdminLogin` | 05.a · Admin: Masuk | `/admin/masuk` | `app/admin/(auth)/masuk/page.tsx` | Langkah 1 email kerja + password, kunci setelah 5x |

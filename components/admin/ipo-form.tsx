@@ -12,7 +12,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
-import { createCompany, describeError, publishCompany, saveCompany, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { createCompany, describeError, publishCompany, saveCompany, type CompanySector, type EditView, type PublishKey } from "@/lib/admin-companies";
+import { SubsectorSelect, subFor } from "./subsector-select";
+import { DeleteCompany } from "./delete-company";
 import { fieldOf } from "@/lib/formik-field";
 import { emptyIpoState, ipoFromForm, ipoToForm } from "@/lib/emiten-form";
 import { dec, fdShort, lembar, num, rp, scheduleError, stageIndex, type Dates } from "@/lib/ipo";
@@ -28,7 +30,7 @@ const PAPAN = [
   { v: "baru", label: "Ekonomi Baru", sub: "Teknologi, saham hak suara multipel" },
 ] as const;
 const BAR = ["#1C1917", "#FEA722", "#A8A29E", "#78716C", "#D6D3D1"];
-const PUB: Record<PublishKey, [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Draf tersimpan", "neutral"], published: ["Terbit", "success"] };
+const PUB: Record<PublishKey, [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Diarsipkan", "neutral"], published: ["Terbit", "success"] };
 
 let uid = Date.now(); // unique across reloads, so restored drafts never share a key with new rows
 type Item = { id: number; t: string; p?: string };
@@ -36,7 +38,7 @@ const withId = <T extends object>(o: T) => ({ id: uid++, ...o });
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 /** Add a new IPO company (no `view`) or edit one the API already has (`view`). The ticker cannot change once created. */
-export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: { slug: string; name: string }[] }) {
+export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: CompanySector[] }) {
   const [view, setView] = useState(loaded ?? null);
   const [s0] = useState(() => (loaded ? ipoFromForm(loaded.company.ticker, loaded.form) : emptyIpoState()));
   const [init] = useState(() => ({ ...s0, uw: s0.uw.map((t) => withId({ t })) as Item[], ud: s0.ud.map((u) => withId(u)) as Item[] }));
@@ -54,7 +56,7 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
       intent.current = "draft";
       const v = await save();
       if (!v) return;
-      if (!publishing) return void toast(`Draf ${code} tersimpan. Belum tampil di aplikasi.`);
+      if (!publishing) return void toast(`${code} tersimpan ke arsip. Belum tampil di aplikasi.`);
       const r = await publishCompany(code); // publish uses the saved draft
       if (!r.ok) return void toast(describeError(r.error));
       setView(r.data);
@@ -119,6 +121,9 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
     { group: "Penawaran", label: "Penggunaan dana", ok: udOk, href: "#i-dana", note: udOk ? "" : `Total ${udTot}%` },
   ];
   const canPublish = checks.every((c) => c.ok);
+  // Nothing to publish while the form equals the saved version and no unpublished archive entry is pending.
+  const [baseline, setBaseline] = useState(() => JSON.stringify(init));
+  const pending = !view || JSON.stringify(form.values) !== baseline || view.hasDraft || !view.published;
   const sectorName = sectors.find((x) => x.slug === sektor)?.name ?? "Tanpa sektor";
 
   const patchList = (set: React.Dispatch<React.SetStateAction<Item[]>>, id: number, f: Partial<Item>) => set((l) => l.map((x) => (x.id === id ? { ...x, ...f } : x)));
@@ -139,6 +144,7 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
     }
     setView(r.data);
     discardDraft();
+    setBaseline(JSON.stringify(form.values));
     return r.data;
   };
   const publish = () => {
@@ -161,8 +167,9 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
       </div>
       <div className="flex items-center gap-2.5">
         <Link href="/admin/emiten" className={buttonVariants({ variant: "outline" })}>{saved ? "Kembali" : "Batal"}</Link>
-        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan draf</Button>
-        <Button aria-disabled={!canPublish} disabled={form.isSubmitting} onClick={publish}>Terbitkan</Button>
+        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan ke arsip</Button>
+        <Button aria-disabled={!canPublish} disabled={form.isSubmitting || !pending} onClick={publish}>Terbitkan</Button>
+        {view && <DeleteCompany ticker={code} published={view.published} onDeleted={discardDraft} />}
       </div>
     </div>
   );
@@ -209,8 +216,8 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
             {tkErr && <Err>{tkErr}</Err>}
             {errs.name && <Err>{errs.name}</Err>}
             <div className="grid gap-3.5 sm:grid-cols-2">
-              <FormField label="Sektor IDX-IC" htmlFor="i-sk"><NativeSelect id="i-sk" value={sektor} onChange={(e) => setSektor(e.target.value)}><NativeSelectOption value="">Pilih sektor</NativeSelectOption>{sectors.map((x) => <NativeSelectOption key={x.slug} value={x.slug}>{x.name}</NativeSelectOption>)}</NativeSelect></FormField>
-              <FormField label="Subsektor" htmlFor="i-ss"><Input id="i-ss" aria-invalid={!sub.trim()} value={sub} onChange={(e) => setSub(e.target.value)} placeholder="mis. Batu bara" /></FormField>
+              <FormField label="Sektor IDX-IC" htmlFor="i-sk"><NativeSelect id="i-sk" value={sektor} onChange={(e) => { setSektor(e.target.value); setSub(subFor(sectors, e.target.value, sub)); }}><NativeSelectOption value="">Pilih sektor</NativeSelectOption>{sectors.map((x) => <NativeSelectOption key={x.slug} value={x.slug}>{x.name}</NativeSelectOption>)}</NativeSelect></FormField>
+              <FormField label="Subsektor" htmlFor="i-ss"><SubsectorSelect id="i-ss" sectors={sectors} sector={sektor} value={sub} onChange={setSub} invalid={!sub.trim()} /></FormField>
             </div>
             <FormField label="Papan pencatatan"><ChoiceCards label="Papan pencatatan" value={papan} onChange={setPapan} options={[...PAPAN]} /></FormField>
             <FormField label="Deskripsi singkat" hint="wajib untuk terbit — dipakai di kartu pencarian" htmlFor="i-sd">

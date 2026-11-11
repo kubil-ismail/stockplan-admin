@@ -64,7 +64,7 @@ Setiap error memakai bentuk yang sama:
 | 403 | `OWN_ROLE`, `SUPER_LOCKED` | (admin) Pengaman di Akses & peran |
 | 404 | `NOT_FOUND` | Data tidak ada (atau belum terbit untuk client) |
 | 409 | `EMAIL_TAKEN`, `TICKER_TAKEN`, `THEME_TAKEN`, `ROLE_TAKEN` | Nilai unik sudah dipakai |
-| 409 | `ALREADY_*`, `NOT_SUSPENDED`, `BAD_STATE`, `CANNOT_RESET`, `NOT_REVERTABLE`, `CONFLICT` | Aksi tidak cocok dengan status data sekarang. Muat ulang data |
+| 409 | `ALREADY_*`, `NOT_SUSPENDED`, `BAD_STATE`, `CANNOT_RESET`, `NOT_REVERTABLE`, `CONFLICT`, `IN_THEME` | Aksi tidak cocok dengan status data sekarang. Muat ulang data |
 | 400 | `BAD_TOKEN` | Token di tautan email tidak valid/kedaluwarsa |
 | 400 | `CURRENT_SESSION` | Tidak bisa menghapus sesi perangkat ini dari daftar sesi (pakai logout) |
 | 422 | `VALIDATION` | Tampilkan `fields` per input |
@@ -131,8 +131,8 @@ Semua endpoint di bawah butuh sesi, kecuali yang di §3.1.
 | Pengaturan | `PATCH /me/prefs` | Tampilan, biaya transaksi, jadwal evaluasi, notifikasi. Notifikasi di-merge per jenis × kanal, jadi cukup kirim yang diubah |
 | Pengaturan: email | `POST /me/email` `{ email }` | Email lama tetap berlaku sampai tautan konfirmasi diklik. Tampilkan `pendingEmail` dari `GET /me` |
 | Pengaturan: hapus akun | `DELETE /me` `{ confirm: "HAPUS" }` | Semua data pengguna ikut terhapus |
-| Tema | `GET /sectors` | 11 sektor + `industryNames` untuk kotak cari + `themes` (tema terbit per sektor; sektor "Segera hadir" bisa punya tema) |
-| TemaSektor | `GET /sectors/:slug` | Subsektor → industri; `notice` untuk banner "Data baru"; `themes` tema terbit di sektor ini. Baris "industri" sekarang berasal dari tema yang diatur admin (bentuk JSON tetap): `slug` bisa sama dengan slug tema (Batu Bara kini `batubara`, nama "Batubara"), jadi pakai hanya sebagai key. Tombol "Lihat" hanya bila `themeSlug` terisi |
+| Tema | `GET /sectors` | 11 sektor + `industryNames` untuk kotak cari + `themes` (tema terbit per sektor). `status` sektor hanya mengikuti industrinya: semua industri `soon` (atau belum ada industri) = "Segera hadir", walau ada tema terbit; `themes` tetap dikirim |
+| TemaSektor | `GET /sectors/:slug` | Subsektor → industri; `notice` untuk banner "Data baru"; `themes` tema terbit di sektor ini. Industri dan tema sekarang satu data (diatur admin di menu Tema): tiap industri bisa punya rantai nilai. `themeSlug` = slug industri itu bila rantainya terbit → tombol "Lihat" ke `/tema/{themeSlug}`; null = belum ada rantai. `status` industri hanya mengikuti `dataStatus` yang diatur admin (soon → "Segera hadir", ready → "Siap" atau "Baru" ≤ 7 hari), walau rantainya sudah terbit; jadi `themeSlug` bisa terisi saat `status: soon`. `themes[]` = industri sektor ini yang rantainya terbit (data yang sama dengan baris di `subsectors`) |
 | TemaDetail, TemaDetailTabel | `GET /themes/:slug` | Tahap, emiten per tahap + porsi, `groups`, `drivers`; isi drawer emiten dari `profile.highlights`; `viewer.watchlist` untuk status tombol. **Kunci `groups` diatur admin** (maks. 8, tidak hanya `hulu`/`tengah`/`hilir`): ambil judul, ikon, warna, dan deskripsi dari `groups[]`, jangan di-hardcode |
 | EmitenSearch | `GET /companies?q=&sector=` | Urutan "Paling cocok" dari server. Tanpa `q` + dengan `sector` = jelajah satu sektor. Per baris ada `themes` dan `inWatchlist` |
 | Emiten, EmitenIPO, EmitenDataTertunda | `GET /companies/:ticker` | Satu panggilan untuk seluruh halaman: detail, `themes`, `peers` ("Satu tahap"), `viewer` (status watchlist dan pengingat). `status: 'ipo'` → layout IPO; `dataDelayed` terisi → banner data tertunda |
@@ -198,7 +198,7 @@ Perubahan peran berlaku **langsung** di request berikutnya (bukan "di sesi berik
 
 - **Daftar** menerima `q`, `tab`, filter lain, `page` (mulai 1), `pageSize` (default 14). Respons: `{ total, page, pageSize, tabs, items, ... }`. `tabs` berisi hitungan per tab yang sudah mengikuti filter lain, jadi badge angka di tab cukup dibaca dari situ.
 - **Ekspor CSV**: buka sebagai tautan unduhan biasa (`<a href="/admin/api/companies/export.csv?...">`). Cookie ikut otomatis karena lewat rewrite di origin admin.
-- **Draf → terbit** (Emiten dan Tema): `PATCH` menyimpan draf (hanya bagian yang dikirim yang diganti) → `POST …/publish` menerbitkan. Data yang dilihat pengguna baru berubah setelah terbit. `GET` detail mengembalikan `form`, kelengkapan per bagian (`sections`/`checks`), dan `canPublish` untuk mengaktifkan tombol "Terbitkan". Kalau terbit ditolak `422 INCOMPLETE`, tampilkan bagian yang belum lengkap.
+- **Draf → terbit** (Emiten dan Tema): `PATCH` menyimpan draf (hanya bagian yang dikirim yang diganti) → `POST …/publish` menerbitkan. Data yang dilihat pengguna baru berubah setelah terbit. Pengecualian Tema: tema berstatus `draft` disembunyikan dari client sampai diterbitkan lagi (`review` tetap terlihat). `GET` detail mengembalikan `form`, kelengkapan per bagian (`sections`/`checks`), dan `canPublish` untuk mengaktifkan tombol "Terbitkan". Kalau terbit ditolak `422 INCOMPLETE`, tampilkan bagian yang belum lengkap.
 - **`actions`** di respons detail (Pengguna, Akses) = tombol yang boleh tampil untuk baris itu. Pakai apa adanya.
 
 ### 4.4 Peta layar → endpoint
@@ -207,10 +207,12 @@ Perubahan peran berlaku **langsung** di request berikutnya (bukan "di sesi berik
 | --- | --- | --- | --- |
 | Shell | `GET /admin/api/auth/me` | — | |
 | AdminEmiten | `GET /admin/api/companies?q=&tab=&sector=&page=&pageSize=` | `em:view` | Tab: `all`, `review`, `incomplete`, `ready`. Kelengkapan 5 bagian per baris |
+| | (respons daftar) `sectors[].subsectors` | `em:view` | `[{ id, name }]` untuk dropdown Sektor → Subsektor di form emiten. Nilai Subsektor yang dikirim ke `PATCH` = `name`. Industri tidak lagi diganti oleh isian ini kecuali namanya sama dengan nama industri |
 | | `GET /admin/api/companies/export.csv?tickers=` | `em:view` | Tanpa `tickers` = semua; `tickers=BUMI,PTBA` = yang dipilih |
 | | `POST /admin/api/companies/bulk-review { tickers }` | `em:edit` | 1–200 ticker → "Perlu ditinjau" |
 | AdminEmitenEdit, AdminEmitenIPO | `GET /admin/api/companies/:ticker` | `em:view` | `themes` hanya baca (dikelola di modul Tema) |
 | | `PATCH /admin/api/companies/:ticker` | `em:edit` | Simpan draf |
+| | `DELETE /admin/api/companies/:ticker` | `em:delete` | `204`. Menghapus emiten + watchlist/pengingat pengguna terkait. `409 IN_THEME` bila masih ada di tahap tema (keluarkan dulu dari tema). Tidak bisa dikembalikan dari Riwayat |
 | | `POST /admin/api/companies/:ticker/publish` | `em:publish` | |
 | AdminEmitenIPO (baru) | `POST /admin/api/companies { ticker, name, ... }` | `em:edit` | Dibuat sebagai draf. Ticker tidak bisa diubah setelah dibuat |
 | AdminPengguna | `GET /admin/api/users?q=&tab=&plan=&page=&pageSize=` | `usr:view` | `summary` (4 kartu) + `tabs` + baris. Status: `act`, `new`, `idle`, `sus` |
@@ -221,9 +223,10 @@ Perubahan peran berlaku **langsung** di request berikutnya (bukan "di sesi berik
 | | `POST …/:id/resend-confirmation`, `POST …/:id/password-reset` | `usr:edit` | |
 | AdminTema | `GET /admin/api/themes?q=&tab=&sector=&queue=` | `tm:view` | Tab: `all`, `open`, `map`, `draft`, `review`. Status `map` ("Peta sektor") = baris halaman sektor yang terbit tanpa rantai; `kind` `chain`/`map`, `readiness` null untuk `map`. `sectors[].subsectors` untuk pilihan form. Termasuk antrean "Emiten belum masuk tema mana pun" |
 | AdminTema "Petakan" | `POST /admin/api/themes/:slug/companies { ticker, stage? }` | `tm:edit` | Masuk ke draf, porsi kosong |
-| AdminTemaBaru | `POST /admin/api/themes { name, sectorSlug, ... }` | `tm:edit` | Nama ≥ 3 karakter dan unik. Slug dibuat dari nama dan tidak berubah |
+| AdminTemaBaru | `POST /admin/api/themes { name, sectorSlug, sectorMap: { subsectorId }, ... }` | `tm:edit` | **Sub-sektor wajib** (tema = industri, selalu di satu sub-sektor; 422 `fields['sectorMap.subsectorId']`). Nama ≥ 3 karakter dan unik. Slug dibuat dari nama dan tidak berubah |
 | AdminTemaEdit | `GET /admin/api/themes/:slug` | `tm:view` | `form` + `checks` + total porsi + riwayat. Bagian form baru `sectorMap { subsectorId, icon, dataStatus, updateNote }` = baris di halaman sektor; ikon dari kosakata sektor (lihat Swagger), sub-sektor harus milik sektor tema. `theme.kind`/`theme.onSectorMap` |
 | | `PATCH /admin/api/themes/:slug` | `tm:edit` | Peran tanpa `tm:publish` → status otomatis "Perlu ditinjau" |
+| | `DELETE /admin/api/themes/:slug` | `tm:delete` | `204`. Menghapus tema + tahapnya. Kalau sudah terbit, hilang juga dari halaman sektor dan `/themes/:slug` client. Emiten terpetakan kembali ke antrean. Tidak bisa dikembalikan dari Riwayat |
 | | `POST /admin/api/themes/:slug/publish` | `tm:publish` | Semua tahap diganti sekaligus. Tema tanpa tahap yang belum pernah terbit (`kind: map`) terbit hanya ke halaman sektor (syarat: nama, sektor, sub-sektor, ikon); detail `/themes/:slug` tetap 404 |
 | Pilih emiten (pool drag & drop) | `GET /admin/api/companies?q=&sector=` | `em:view` | |
 | AdminAkses | `GET /admin/api/access/members` | `acc:view` | |
@@ -257,7 +260,7 @@ npm install && npm run migrate && npx sequelize-cli db:seed:all && npm run dev  
 - **Admin dev**: `admin@stockplan.id` / `StockPlanDev2026` (super admin). Secret TOTP dan kode cadangan dicetak saat seeder admin dijalankan:
   `npx sequelize-cli db:seed --seed 20261111000001-admin-users.js`. Masukkan secret ke aplikasi authenticator.
 - **User client**: daftar lewat `POST /auth/register`, lalu ambil tautan konfirmasi dari log server (email belum terkirim). Alternatif: `UPDATE auth_users SET "emailVerified" = true WHERE email = '…';`
-- **Data contoh**: 11 sektor (subsektor/industri hanya Energi), emiten dari board EmitenSearch + tema Batubara. Detail halaman lengkap hanya **BUMI** (tercatat) dan **ABNU** (IPO fiktif). Tema yang terisi: `batubara`.
+- **Data contoh**: 11 sektor; sub-sektor/industri untuk Energi, Barang Baku, Keuangan, Infrastruktur, dan Teknologi (sektor lain "Segera hadir"). Status data campuran: Siap, Baru (Telekomunikasi, dengan banner), Segera hadir. Industri dengan rantai nilai (halaman `/tema/:slug`): `batubara`, `nikel`, `telekomunikasi`. Nama industri dan porsi/sumber di tahap adalah ilustrasi dev, bukan IDX-IC resmi atau data laporan keuangan. Emiten dari board EmitenSearch; detail halaman lengkap hanya **BUMI** (tercatat) dan **ABNU** (IPO fiktif). Seeder tambahan bisa dijalankan sendiri dan aman diulang: `npx sequelize-cli db:seed --seed 20261112000001-themes-industries.js` (batalkan: `db:seed:undo --seed …`).
 - Semua tautan email (konfirmasi, atur ulang password, undangan) hanya dicetak ke console server.
 
 ## 6. Kontak dan perubahan
