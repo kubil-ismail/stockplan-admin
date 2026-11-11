@@ -1,5 +1,5 @@
 // Pure helpers for the theme builder (value-chain stages with emiten rows). No React here so they can be tested.
-import type { ThemeForm } from "./admin-themes";
+import type { SectorMap, ThemeForm, ThemeSector } from "./admin-themes";
 
 export type Row = { tk: string; p: string; src?: string };
 export type Stage = { id: number; name: string; g: string; desc: string; rows: Row[] };
@@ -45,26 +45,37 @@ export const readiness = (ok: number, n: number) => (n ? Math.round((ok / n) * 1
 export const parsePct = (p: string) => (p.trim() ? Number(p.trim().replace(",", ".")) : null);
 const showPct = (n: number | null) => (n === null ? "" : String(n).replace(".", ","));
 
-export type Draft = { name: string; sectorSlug: string; description: string; drivers: string[]; groups: Group[]; stages: Stage[] };
+export type Draft = { name: string; sectorSlug: string; description: string; drivers: string[]; groups: Group[]; stages: Stage[]; sectorMap: SectorMap };
+
+export const NOTE_MAX = 200;
+export const EMPTY_SECTOR_MAP: SectorMap = { subsectorId: "", icon: "", dataStatus: "soon", updateNote: "" };
+
+/** Changing the sector drops a sub-sector that belongs to another one (the API rejects it). */
+export const sectorMapFor = (m: SectorMap, sectorSlug: string, sectors: ThemeSector[]): SectorMap =>
+  sectors.find((s) => s.slug === sectorSlug)?.subsectors.some((x) => x.id === m.subsectorId) ? m : { ...m, subsectorId: "" };
 
 export const fromForm = (f: ThemeForm): Draft => ({
   name: f.name, sectorSlug: f.sectorSlug, description: f.description, drivers: f.drivers,
   groups: f.groups.map((g) => ({ id: g.key, t: g.title, d: g.description, ic: g.icon, c: g.color })),
+  sectorMap: f.sectorMap,
   stages: f.stages.map((s, i) => ({ id: i + 1, name: s.name, g: s.groupKey, desc: s.description, rows: s.rows.map((r) => ({ tk: r.ticker, p: showPct(r.pct), src: r.source })) })),
 });
 
 export const toForm = (d: Draft): ThemeForm => ({
   name: d.name.trim(), sectorSlug: d.sectorSlug, description: d.description.trim(), drivers: d.drivers.map((x) => x.trim()).filter(Boolean),
   groups: d.groups.map((g) => ({ key: g.id, title: g.t, description: g.d, icon: g.ic, color: g.c })),
+  sectorMap: d.sectorMap,
   stages: d.stages.map((s) => ({ name: s.name, groupKey: s.g, description: s.desc, rows: s.rows.map((r) => ({ ticker: r.tk, pct: parsePct(r.p) as number | null, source: r.src ?? "" })) })),
 });
 
 /** Submit-time checks for the builder form (Formik `validate`). Drafts may be incomplete; the API gates publishing. */
-export function validateTema(d: Draft) {
-  const e: { name?: string; sectorSlug?: string; description?: string; stages?: string } = {};
+export function validateTema(d: Draft, creating = false) {
+  const e: { name?: string; sectorSlug?: string; description?: string; stages?: string; updateNote?: string; subsectorId?: string } = {};
   if (d.name.trim().length < 3) e.name = "Nama tema minimal 3 huruf";
   if (!d.sectorSlug) e.sectorSlug = "Pilih sektor dulu"; // COPY: perlu review
   if (d.description.length > 160) e.description = "Deskripsi maksimal 160 karakter"; // COPY: perlu review
+  if (creating && !d.sectorMap.subsectorId) e.subsectorId = "Pilih sub-sektor."; // COPY: sama dengan pesan API
+  if (d.sectorMap.updateNote.length > NOTE_MAX) e.updateNote = `Catatan maksimal ${NOTE_MAX} karakter`; // COPY: perlu review
   if (d.stages.some((s) => s.rows.some((r) => { const v = parsePct(r.p); return v !== null && !(v >= 0 && v <= 100); }))) e.stages = "Porsi harus angka 0–100"; // COPY: perlu review
   return e;
 }

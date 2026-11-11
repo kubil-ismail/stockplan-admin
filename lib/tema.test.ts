@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { checklist, fromForm, moveEmiten, moveStage, parsePct, readiness, removeEmiten, stagesOf, toForm, validateTema, type Stage } from "./tema.ts";
+import { checklist, EMPTY_SECTOR_MAP, fromForm, sectorMapFor, moveEmiten, moveStage, parsePct, readiness, removeEmiten, stagesOf, toForm, validateTema, type Stage } from "./tema.ts";
 
 const S: Stage[] = [
   { id: 1, name: "Hulu", g: "g1", desc: "d", rows: [{ tk: "PGEO", p: "100" }] },
@@ -26,6 +26,7 @@ assert.ok(Number.isNaN(parsePct("abc")));
 const form = {
   name: "Energi", sectorSlug: "energi", description: "Satu kalimat.", drivers: ["Harga"],
   groups: [{ key: "hulu", title: "Hulu", description: "Menggali", icon: "mine", color: "amber" }],
+  sectorMap: { subsectorId: "sub-1", icon: "sun", dataStatus: "ready" as const, updateNote: "Data baru" },
   stages: [{ name: "Tambang", groupKey: "hulu", description: "Menggali batu bara", rows: [{ ticker: "BUMI", pct: 12.5, source: "LK 2025" }, { ticker: "ITMG", pct: null, source: "" }] }],
 };
 const d = fromForm(form);
@@ -36,4 +37,13 @@ assert.deepEqual(checklist({ ...d, stages: [] }).map((c) => c[1]), [true, false,
 assert.deepEqual(Object.keys(validateTema({ ...d, name: "ab", sectorSlug: "" })), ["name", "sectorSlug"]);
 assert.deepEqual(validateTema({ ...d, stages: [{ ...d.stages[0], rows: [{ tk: "BUMI", p: "150" }] }] }), { stages: "Porsi harus angka 0–100" });
 assert.deepEqual(validateTema(d), {});
+assert.deepEqual(validateTema({ ...d, sectorMap: EMPTY_SECTOR_MAP }, true), { subsectorId: "Pilih sub-sektor." }); // creating needs a sub-sector
+assert.deepEqual(validateTema({ ...d, sectorMap: EMPTY_SECTOR_MAP }), {}); // editing a legacy draft does not
+// Sector map: round-trips, 200-char note limit, and a sub-sector of another sector is dropped when the sector changes.
+assert.deepEqual(d.sectorMap, form.sectorMap);
+assert.deepEqual(validateTema({ ...d, sectorMap: { ...d.sectorMap, updateNote: "x".repeat(201) } }), { updateNote: "Catatan maksimal 200 karakter" });
+const SEC = [{ slug: "energi", name: "Energi", subsectors: [{ id: "sub-1", name: "Energi Alternatif" }] }, { slug: "keuangan", name: "Keuangan", subsectors: [] }];
+assert.equal(sectorMapFor(d.sectorMap, "energi", SEC).subsectorId, "sub-1");
+assert.equal(sectorMapFor(d.sectorMap, "keuangan", SEC).subsectorId, "");
+assert.equal(sectorMapFor(EMPTY_SECTOR_MAP, "", SEC).subsectorId, "");
 console.log("tema ok");

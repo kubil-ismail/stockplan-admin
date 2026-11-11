@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { adminLogout, adminMe, type AdminUser } from "@/lib/admin-api";
 import { markSignedIn, markSignedOut } from "@/lib/admin-session-flag";
+import { persistor } from "@/lib/store";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,7 +49,7 @@ export function AdminSession({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [check]);
 
-  const logout = useCallback(async () => { await adminLogout(); markSignedOut(); router.replace(LOGIN); }, [router]);
+  const logout = useCallback(async () => { await adminLogout(); markSignedOut(); await persistor?.purge(); router.replace(LOGIN); }, [router]); // purge: unsaved drafts belong to the admin who is signing out
   const value = useMemo(() => (state.status === "authed" ? { admin: state.admin, logout } : null), [state, logout]);
 
   if (value) return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

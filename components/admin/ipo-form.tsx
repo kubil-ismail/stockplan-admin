@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { useFormik } from "formik";
+import { useFormDraft } from "@/hooks/use-form-draft";
 import { toast } from "sonner";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,7 +30,7 @@ const PAPAN = [
 const BAR = ["#1C1917", "#FEA722", "#A8A29E", "#78716C", "#D6D3D1"];
 const PUB: Record<PublishKey, [string, Tone]> = { review: ["Perlu ditinjau", "warning"], draft: ["Draf tersimpan", "neutral"], published: ["Terbit", "success"] };
 
-let uid = 100;
+let uid = Date.now(); // unique across reloads, so restored drafts never share a key with new rows
 type Item = { id: number; t: string; p?: string };
 const withId = <T extends object>(o: T) => ({ id: uid++, ...o });
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
@@ -60,6 +61,7 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
       toast(`${code} diterbitkan. Tampil di aplikasi sebagai “Segera IPO”.`);
     },
   });
+  const discardDraft = useFormDraft({ key: `ipo:${loaded?.company.ticker ?? "baru"}`, base: loaded?.updatedAt ?? "", values: form.values, initial: form.initialValues, setValues: (v) => void form.setValues(v, false) });
   const f = fieldOf(form);
   const [name, setName] = f("name");
   const [tk, setTk] = f("tk");
@@ -136,6 +138,7 @@ export function IpoForm({ view: loaded, sectors }: { view?: EditView; sectors: {
       return null;
     }
     setView(r.data);
+    discardDraft();
     return r.data;
   };
   const publish = () => {

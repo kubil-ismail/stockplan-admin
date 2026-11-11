@@ -3,15 +3,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { listCompanies } from "@/lib/admin-companies";
-import { getTheme, type ThemeView } from "@/lib/admin-themes";
+import { getTheme, listThemes, type ThemeSector, type ThemeView } from "@/lib/admin-themes";
 import type { ApiError } from "@/lib/admin-api";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TemaBuilder } from "./tema-builder";
 
-type Loaded = { key: string; sectors?: { slug: string; name: string }[]; view?: ThemeView; error?: ApiError };
+type Loaded = { key: string; sectors?: ThemeSector[]; view?: ThemeView; error?: ApiError };
 
 /** Loads the sector list (and the theme when `slug` is given), then shows the builder. */
 export function TemaEditor({ slug }: { slug?: string }) {
@@ -21,12 +20,13 @@ export function TemaEditor({ slug }: { slug?: string }) {
 
   useEffect(() => {
     let live = true;
-    void Promise.all([listCompanies({ pageSize: 1 }), slug ? getTheme(slug) : Promise.resolve(null)]).then(([l, t]) => {
+    // Sectors (with sub-sectors) come with the theme itself; a new theme borrows them from the list.
+    const done = (r: { ok: true; data: ThemeView | { sectors: ThemeSector[] } } | { ok: false; error: ApiError }) => {
       if (!live) return;
-      if (!l.ok) return setLoaded({ key, error: l.error });
-      if (t && !t.ok) return setLoaded({ key, error: t.error });
-      setLoaded({ key, sectors: l.data.sectors, view: t?.data });
-    });
+      if (!r.ok) return setLoaded({ key, error: r.error });
+      setLoaded({ key, sectors: r.data.sectors, view: "form" in r.data ? r.data : undefined });
+    };
+    void (slug ? getTheme(slug) : listThemes()).then(done);
     return () => { live = false; };
   }, [key, slug]);
 

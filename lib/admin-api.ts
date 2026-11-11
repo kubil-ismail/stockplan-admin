@@ -37,6 +37,7 @@ const post = <T>(path: string, body?: unknown) => send<T>("POST")(path, body);
 export const adminGet = <T>(path: string) => call<T>(path);
 export const adminPost = post;
 export const adminPatch = <T>(path: string, body: unknown) => send<T>("PATCH")(path, body);
+export const adminDelete = (path: string) => send<null>("DELETE")(path);
 export const adminPut = <T>(path: string, body: unknown) => send<T>("PUT")(path, body);
 
 /** For non-JSON downloads (CSV). */

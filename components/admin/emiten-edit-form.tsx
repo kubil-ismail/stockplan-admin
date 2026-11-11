@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { useFormik } from "formik";
+import { useFormDraft } from "@/hooks/use-form-draft";
 import { toast } from "sonner";
 import { ExternalLink, Info, Lock, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,7 +24,7 @@ import {
   Section, ShareBar, StatusBadge, type Check as CheckItem, type Tone,
 } from "./form-ui";
 
-let uid = 1000;
+let uid = Date.now(); // unique across reloads, so restored drafts never share a key with new rows
 const id = <T extends object>(o: T) => ({ id: uid++, ...o });
 type L<T> = (T & { id: number })[];
 const withIds = <T extends object>(l: T[]): L<T> => l.map((x) => id(x));
@@ -72,6 +73,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
       toast(`Perubahan ${code} diterbitkan dan langsung tampil di aplikasi`);
     },
   });
+  const discardDraft = useFormDraft({ key: `emiten:${code}`, base: loaded.updatedAt, values: form.values, initial: form.initialValues, setValues: (v) => void form.setValues(v, false) });
   const f = fieldOf(form);
   const [name, setName] = f("name");
   const [tr, setTr] = f("tr");
@@ -139,7 +141,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
     { group: "Kepemilikan", label: "Manajemen", ok: mgOk, href: "#s-mgmt", note: mgOk ? "" : "Ada yang kosong" },
     { group: "Konteks", label: "Risiko utama", ok: rkOk, href: "#s-risk", note: rkOk ? "" : "Ada yang kosong" },
     { group: "Konteks", label: "Berita", ok: nwOk, href: "#s-berita", note: nwOk ? "" : "Ada yang kosong" },
-    { group: "Konteks", label: "Tema & rantai nilai", ok: true, href: "#s-tema", note: "Modul Tema" },
+    { group: "Konteks", label: "Tema & Industri", ok: true, href: "#s-tema", note: "Modul Tema" },
   ];
   const canPub = checks.every((c) => c.ok);
   const sectorName = sectors.find((x) => x.slug === sektor)?.name ?? "Tanpa sektor";
@@ -155,6 +157,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
     const r = await saveCompany(code, currentForm());
     if (!r.ok) { toast(describeError(r.error)); return null; }
     setView(r.data);
+    discardDraft();
     return r.data;
   };
   const publish = () => {
@@ -397,7 +400,7 @@ export function EmitenEditForm({ view: loaded, sectors }: { view: EditView; sect
         <LinkBtn onClick={() => setNw([...nw, id({ t: "", src: "", d: "" })])}>+ Tambah berita</LinkBtn>
       </Section>
 
-      <Section id="s-tema" title="Tema & rantai nilai" desc="Diatur dari halaman tema: tahap dan porsi pendapatan emiten ada di sana.">
+      <Section id="s-tema" title="Tema & Industri" desc="Diatur dari halaman tema: tahap dan porsi pendapatan emiten ada di sana.">
         {view.themes.length ? view.themes.map((t) => (
           <Item key={t.slug} variant="outline"><ItemContent className="flex-row items-baseline gap-2"><ItemTitle><Link href={`/admin/tema/${t.slug}`} className="hover:underline">{t.name}</Link></ItemTitle><ItemDescription>· {t.stageCount} tahap</ItemDescription></ItemContent></Item>
         )) : <Help>Belum dipetakan ke tema mana pun.</Help>}

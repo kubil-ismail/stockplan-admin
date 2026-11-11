@@ -4,14 +4,16 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useFormik } from "formik";
+import { useFormDraft } from "@/hooks/use-form-draft";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, GripVertical, MoreHorizontal, MousePointer2, Plus, Trash2 } from "lucide-react";
+import { GripVertical, MoreHorizontal, MousePointer2, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDebounced } from "@/hooks/use-debounced";
 import { describeError, listCompanies, type ListResponse } from "@/lib/admin-companies";
-import { createTheme, publishTheme, saveTheme, type ThemeView } from "@/lib/admin-themes";
-import { checklist, fromForm, moveEmiten, moveStage, READY_MIN, removeEmiten, stagesOf, toForm, validateTema, type Draft, type Group, type Result, type Row, type Stage } from "@/lib/tema";
-import { ICONS, PALETTE } from "@/lib/tema-data";
+import { createTheme, deleteTheme, publishTheme, saveTheme, type ThemeSector, type ThemeView } from "@/lib/admin-themes";
+import { checklist, EMPTY_SECTOR_MAP, fromForm, moveEmiten, moveStage, NOTE_MAX, READY_MIN, sectorMapFor, removeEmiten, stagesOf, toForm, validateTema, type Draft, type Group, type Result, type Row, type Stage } from "@/lib/tema";
+import { SECTOR_ICON } from "@/lib/sector-icons";
+import { ICONS, PALETTE, SECTOR_ICONS } from "@/lib/tema-data";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
@@ -24,20 +26,22 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AffixInput, Counter, EntityAvatar, FormField, Help, SearchInput, Section, StatusBadge } from "./form-ui";
 
-type Drag = { kind: "em"; tk: string; from: number | null } | { kind: "st"; id: number } | null;
+type Drag = { kind: "em"; tk: string; from: number | null } | { kind: "st"; id: number } | { kind: "gr"; id: string } | null;
 const AVATAR = ["#15803D", "#1D4ED8", "#0F766E", "#92400E", "#6D28D9", "#1C1917", "#BE185D", "#B45309"];
 const pal = (g?: Group) => { const p = PALETTE[g?.c ?? "stone"]; return { bg: p[1], bar: p[2], soft: p[3], ink: p[4] }; };
 const colorOf = (t: string) => AVATAR[[...t].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR.length]; // stable per ticker
 type Info = Record<string, { name: string; logo?: string }>;
 // Same defaults as the API's DEFAULT_GROUPS (lib/themes.js); descriptions are required before publishing.
 const NEW_DRAFT: Draft = {
-  name: "", sectorSlug: "", description: "", drivers: [""], stages: [],
+  name: "", sectorSlug: "", description: "", drivers: [""], stages: [], sectorMap: EMPTY_SECTOR_MAP,
   groups: [
     { id: "hulu", t: "Hulu", d: "", ic: "mine", c: "amber" },
     { id: "tengah", t: "Tengah", d: "", ic: "truck", c: "blue" },
     { id: "hilir", t: "Hilir", d: "", ic: "bolt", c: "green" },
   ],
 };
+/** Server field errors for the sector-map part: "sectorMap.icon" etc., and "sectorMap" on publish (422 INCOMPLETE). */
+const sectorMapErrors = (f?: Record<string, string>) => Object.fromEntries(Object.entries(f ?? {}).filter(([k]) => k.startsWith("sectorMap")));
 const ICON_D = Object.fromEntries(ICONS.map((i) => [i[0], i[2]]));
 const Icon = ({ d, size = 16 }: { d: string; size?: number }) => (
   <svg aria-hidden width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
@@ -48,7 +52,7 @@ const Avatar = ({ tk, logo }: { tk: string; logo?: string }) => <EntityAvatar co
 type Pool = { key: string; data?: ListResponse; error?: string };
 
 /** No `view` = new theme (POST on first save, then the edit page); with `view` = edit (PATCH, publish). */
-export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; sectors: { slug: string; name: string }[] }) {
+export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; sectors: ThemeSector[] }) {
   const router = useRouter();
   const [d0] = useState<Draft>(() => (loaded ? fromForm(loaded.form) : NEW_DRAFT));
   const [view, setView] = useState(loaded);
@@ -58,41 +62,71 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
   const [pq, setPq] = useState("");
   const [psec, setPsec] = useState("");
   const [pool, setPool] = useState<Pool | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [confirmG, setConfirmG] = useState<string | null>(null); // main group awaiting delete confirmation
+  const [deleting, setDeleting] = useState(false);
+  const [smErr, setSmErr] = useState<Record<string, string>>({}); // server errors, keyed "sectorMap.*"
   const [drag, setDrag] = useState<Drag>(null);
   const [over, setOver] = useState<string | null>(null);
   const slug = view?.theme.slug;
   const intent = useRef<"draft" | "publish">("draft");
+  const [saved, setSaved] = useState(() => JSON.stringify({ ...d0, drivers: d0.drivers.length ? d0.drivers : [""] })); // what the server holds as the draft; compared to the live form to detect edits
 
   // Form state lives in Formik; validation runs on submit only and a field's error clears on its next edit (like the login form).
   const form = useFormik<Draft>({
     initialValues: { ...d0, drivers: d0.drivers.length ? d0.drivers : [""] },
     validateOnChange: false,
     validateOnBlur: false,
-    validate: validateTema,
+    validate: (v) => validateTema(v, !slug), // a new theme must pick its sub-sector
     onSubmit: async (v, { setFieldError }) => {
       const publishing = intent.current === "publish";
       intent.current = "draft";
       const body = toForm(v);
       const r = slug ? await saveTheme(slug, body) : await createTheme(body);
+      setSmErr({});
       if (!r.ok) {
         if (r.error.fields?.name) setFieldError("name", r.error.fields.name);
+        setSmErr(sectorMapErrors(r.error.fields));
         return void toast(describeError(r.error));
       }
       setView(r.data);
+      setSaved(JSON.stringify(v));
+      discardDraft();
       if (!publishing) toast(`Draf tema ${r.data.form.name} tersimpan`);
       else { // publish uses the saved draft
         const p = await publishTheme(r.data.theme.slug);
-        if (p.ok) { setView(p.data); toast(`Tema ${p.data.form.name} diterbitkan`); } else toast(describeError(p.error)); // COPY: perlu review
+        if (p.ok) { setView(p.data); toast(`Tema ${p.data.form.name} diterbitkan`); } else { setSmErr(sectorMapErrors(p.error.fields)); toast(describeError(p.error)); } // COPY: perlu review
       }
       if (!slug) router.replace(`/admin/tema/${r.data.theme.slug}`);
     },
   });
+  const discardDraft = useFormDraft({
+    key: `tema:${slug ?? "baru"}`, base: loaded?.updatedAt ?? "", values: form.values, initial: form.initialValues, extra: info,
+    setValues: (v) => void form.setValues(v, false),
+    // ticker names/logos are display-only state outside the form; stage ids must stay unique after the restore
+    onRestore: (x, v) => { if (x) setInfo((i) => ({ ...(x as Info), ...i })); setNid(Math.max(0, ...v.stages.map((s) => s.id)) + 1); },
+  });
   const { groups, stages, drivers } = form.values;
+  const dirty = JSON.stringify(form.values) !== saved;
+  // Saved edits (or a never-published theme) still wait to be published; with neither, there is nothing to publish.
+  const canPublish = dirty || !!view?.theme.hasDraft || !(view?.theme.published || view?.theme.onSectorMap);
   const errs = form.errors as Record<string, string | undefined>;
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => { if (errs[k]) form.setFieldError(k, undefined); void form.setFieldValue(k, v, false); };
   const setGroups = (v: Group[]) => set("groups", v);
   const setStages = (v: Stage[]) => set("stages", v);
   const setDrivers = (v: string[]) => set("drivers", v);
+  const remove = async () => {
+    if (!slug) return;
+    setDeleting(true);
+    const r = await deleteTheme(slug);
+    if (!r.ok) { setDeleting(false); setConfirmDel(false); return void toast(describeError(r.error)); }
+    discardDraft();
+    toast(`Tema ${view?.form.name ?? slug} dihapus`); // COPY: perlu review
+    router.replace("/admin/tema");
+  };
+  const sectorMap = form.values.sectorMap;
+  const setSM = (o: Partial<typeof sectorMap>) => { setSmErr({}); set("sectorMap", { ...sectorMap, ...o }); };
+  const subsectors = sectors.find((x) => x.slug === form.values.sectorSlug)?.subsectors ?? [];
   const change = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => { if (errs[e.target.name]) form.setFieldError(e.target.name, undefined); form.handleChange(e); };
 
   // Emiten pool = Data emiten search, keyed by its filters so "loading" is derived.
@@ -112,12 +146,22 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
 
   const nG = groups.length;
   const updG = (id: string, o: Partial<Group>) => setGroups(groups.map((g) => (g.id === id ? { ...g, ...o } : g)));
-  const moveG = (i: number, d: number) => { const a = groups.slice(); const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; setGroups(a); };
+  // Drop a main group onto another: it takes that group's place and the rest shift over.
+  const dropG = (from: string, to: string) => {
+    const a = groups.slice(), i = a.findIndex((g) => g.id === from), j = a.findIndex((g) => g.id === to);
+    if (i < 0 || j < 0 || i === j) return;
+    a.splice(j, 0, a.splice(i, 1)[0]);
+    setGroups(a);
+  };
   const updS = (id: number, o: Partial<Stage>) => setStages(stages.map((s) => (s.id === id ? { ...s, ...o } : s)));
   const updRow = (sid: number, tk: string, o: Partial<Row>) => setStages(stages.map((s) => (s.id === sid ? { ...s, rows: s.rows.map((r) => (r.tk === tk ? { ...r, ...o } : r)) } : s)));
   const newKey = () => { let i = groups.length + 1; while (groups.some((g) => g.id === `g${i}`)) i += 1; return `g${i}`; };
 
-  const checks = [...checklist(form.values), ...(view ? [[`Kesiapan emiten ≥ ${READY_MIN}%`, view.readiness.percent >= READY_MIN] as [string, boolean]] : [])];
+  // A map row (no chain yet) shows the server's own checks as they are; a chain keeps the live local ones plus the server-only ones.
+  const server = (view?.checks ?? []).map((c): [string, boolean] => [c.label, c.ok]);
+  const checks: [string, boolean][] = view?.theme.kind === "map" ? server
+    : [...checklist(form.values), ...(view?.readiness ? [[`Kesiapan emiten ≥ ${READY_MIN}%`, view.readiness.percent >= READY_MIN] as [string, boolean]] : []),
+      ...(view?.checks.filter((c) => c.key === "sectorMap").map((c): [string, boolean] => [c.label, c.ok]) ?? [])];
   const used = new Set(stages.flatMap((s) => s.rows.map((r) => r.tk)));
   const poolLoading = !pool || pool.key !== pkey;
   const poolDz = drag?.kind === "em" && drag.from !== null;
@@ -137,10 +181,20 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
     <form onSubmit={form.handleSubmit} noValidate className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="flex items-center gap-3 text-[26px] leading-tight font-bold tracking-tight">{slug ? "Edit tema" : "Tambah tema"}{view && <StatusBadge tone={view.theme.published ? "success" : "neutral"}>{view.theme.statusLabel}</StatusBadge>}</h1>
+          <h1 className="flex items-center gap-3 text-[26px] leading-tight font-bold tracking-tight">{slug ? "Edit tema" : "Tambah tema"}{view && <StatusBadge tone={view.theme.published || view.theme.onSectorMap ? "success" : "neutral"}>{view.theme.statusLabel}</StatusBadge>}</h1>
           <p className="text-muted-foreground">Isi identitasnya, lalu susun rantai nilai dengan menarik emiten ke tiap tahap.</p>
         </div>
-        <Link href="/admin/tema" className={buttonVariants({ variant: "outline" })}>{slug ? "Kembali" : "Batal"}</Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* COPY: perlu review (tombol dan konfirmasi hapus) */}
+          {slug && (confirmDel ? (
+            <span role="alertdialog" aria-label="Konfirmasi hapus tema" className="flex flex-wrap items-center gap-2 text-[13px]">
+              <span>Hapus tema ini{view?.theme.onSectorMap || view?.theme.published ? " dari aplikasi" : ""}? Tidak bisa dikembalikan.</span>
+              <Button variant="destructive-outline" size="sm" disabled={deleting} onClick={() => void remove()}>Ya, hapus</Button>
+              <Button variant="outline" size="sm" disabled={deleting} onClick={() => setConfirmDel(false)}>Batal</Button>
+            </span>
+          ) : <Button variant="destructive-outline" onClick={() => setConfirmDel(true)}><Trash2 aria-hidden />Hapus tema</Button>)}
+          <Link href="/admin/tema" className={buttonVariants({ variant: "outline" })}>{slug ? "Kembali" : "Batal"}</Link>
+        </div>
       </div>
 
       <Section id="t-id" title="1 · Identitas tema" desc="Tampil di kartu tema dan di atas peta rantai nilai.">
@@ -149,7 +203,7 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
             <Input id="n-n" name="name" aria-invalid={!!errs.name} value={form.values.name} onChange={change} placeholder="mis. Energi terbarukan" />
             {errs.name && <Help className="text-(--sp-danger-text)">{errs.name}</Help>}
           </FormField>
-          <FormField label="Sektor IDX-IC" htmlFor="n-s"><NativeSelect id="n-s" name="sectorSlug" aria-invalid={!!errs.sectorSlug} value={form.values.sectorSlug} onChange={change}><NativeSelectOption value="">Pilih sektor…</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect>{errs.sectorSlug && <Help className="text-(--sp-danger-text)">{errs.sectorSlug}</Help>}</FormField>
+          <FormField label="Sektor IDX-IC" htmlFor="n-s"><NativeSelect id="n-s" name="sectorSlug" aria-invalid={!!errs.sectorSlug} value={form.values.sectorSlug} onChange={(e) => { change(e); void form.setFieldValue("sectorMap", sectorMapFor(sectorMap, e.target.value, sectors), false); }}><NativeSelectOption value="">Pilih sektor…</NativeSelectOption>{sectors.map((s) => <NativeSelectOption key={s.slug} value={s.slug}>{s.name}</NativeSelectOption>)}</NativeSelect>{errs.sectorSlug && <Help className="text-(--sp-danger-text)">{errs.sectorSlug}</Help>}</FormField>
         </div>
         <FormField label="Deskripsi singkat" htmlFor="n-d">
           <Textarea id="n-d" name="description" aria-invalid={form.values.description.length > 160} className="min-h-16" value={form.values.description} onChange={change} placeholder="Satu kalimat: bisnis apa saja yang masuk tema ini." />
@@ -169,24 +223,36 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
         </FormField>
       </Section>
 
-      <Section id="t-ms" title="2 · Tahap utama" desc="Kelompok besar di peta rantai nilai. Ikon, warna, judul, dan deskripsinya tampil di aplikasi persis seperti pratinjau ini.">
+      <Section id="t-ms" title="2 · Tahap utama" desc="Kelompok besar di peta rantai nilai. Ikon, warna, judul, dan deskripsinya tampil di aplikasi persis seperti pratinjau ini. Tarik pegangan di kiri untuk mengubah urutan.">
         <div className="flex flex-col gap-2.5">
           {groups.map((g, i) => {
+            const gk = `g:${g.id}`, dzG = drag?.kind === "gr" && drag.id !== g.id;
             const p = pal(g), open = !!gOpen[g.id], used_ = stages.filter((s) => s.g === g.id).length, nm = g.t.trim() || `tahap utama ${i + 1}`;
             return (
               <Collapsible key={g.id} open={open} onOpenChange={(o) => setGOpen({ ...gOpen, [g.id]: o })} render={<Card className="gap-0 py-0" />}>
-                <div className="flex flex-wrap items-center gap-3 px-4 py-2.5" style={{ background: p.bg, boxShadow: `inset 3px 0 0 ${p.bar}` }}>
+                <div {...dropProps(gk, dzG, () => { if (drag?.kind === "gr") dropG(drag.id, g.id); })}
+                  className={cn("flex flex-wrap items-center gap-3 px-4 py-2.5", dzG && over === gk && "outline-2 -outline-offset-2 outline-foreground", drag?.kind === "gr" && drag.id === g.id && "opacity-50")}
+                  style={{ background: p.bg, boxShadow: `inset 3px 0 0 ${p.bar}` }}>
+                  <span {...dragProps({ kind: "gr", id: g.id })} title="Tarik untuk mengubah urutan" aria-hidden className="cursor-grab text-sp-faint active:cursor-grabbing"><GripVertical className="size-4" /></span>
                   <span aria-hidden className="inline-flex size-7 flex-none items-center justify-center rounded-lg" style={{ background: p.soft, color: p.ink }}><Icon d={ICON_D[g.ic]} /></span>
                   <span className="text-[11.5px] font-bold tracking-[.08em] uppercase" style={{ color: p.ink }}>{g.t.trim() || "Tanpa judul"}</span>
                   <span className="min-w-0 flex-1 truncate text-[13px] text-sp-icon">{g.d.trim() || "Belum ada deskripsi"}</span>
                   <span className="text-xs text-muted-foreground">{used_ ? `${used_} tahap` : "Belum dipakai"}</span>
                   <span className="flex items-center gap-0.5">
-                    <Button variant="ghost" size="icon-sm" aria-label={`Naikkan ${nm}`} aria-disabled={i === 0} onClick={() => moveG(i, -1)}><ChevronUp /></Button>
-                    <Button variant="ghost" size="icon-sm" aria-label={`Turunkan ${nm}`} aria-disabled={i === nG - 1} onClick={() => moveG(i, 1)}><ChevronDown /></Button>
-                    <Button variant="ghost" size="icon-sm" aria-label={`Hapus ${nm}`} className="hover:text-(--sp-danger-text)" onClick={() => { if (used_) return toast(`Pindahkan dulu ${used_} tahap yang memakai ${nm}`); if (nG <= 1) return toast("Minimal satu tahap utama"); setGroups(groups.filter((x) => x.id !== g.id)); toast(`${nm} dihapus`); }}><Trash2 /></Button>
                     <Button variant="outline" size="sm" className="ml-1" aria-expanded={open} onClick={() => setGOpen({ ...gOpen, [g.id]: !open })}>{open ? "Selesai" : "Ubah"}</Button>
+                    <Button variant="ghost" size="icon-sm" aria-label={`Hapus ${nm}`} className="hover:text-(--sp-danger-text)" onClick={() => { if (used_) return toast(`Pindahkan dulu ${used_} tahap yang memakai ${nm}`); if (nG <= 1) return toast("Minimal satu tahap utama"); setConfirmG(g.id); }}><Trash2 /></Button>
                   </span>
                 </div>
+                {confirmG === g.id && (
+                  // COPY: perlu review
+                  <div role="alertdialog" aria-label={`Konfirmasi hapus ${nm}`} className="flex flex-wrap items-center justify-between gap-2 border-t border-(--sp-danger-border) bg-(--sp-danger-bg) px-4 py-2 text-[13px]">
+                    <span>Hapus tahap utama <b>{nm}</b>? Tidak bisa dibatalkan setelah draf disimpan.</span>
+                    <span className="flex gap-2">
+                      <Button variant="destructive-outline" size="sm" onClick={() => { setGroups(groups.filter((x) => x.id !== g.id)); setConfirmG(null); toast(`${nm} dihapus`); }}>Ya, hapus</Button>
+                      <Button variant="outline" size="sm" onClick={() => setConfirmG(null)}>Batal</Button>
+                    </span>
+                  </div>
+                )}
                 <CollapsibleContent>
                   <CardContent className="flex flex-col gap-3.5 border-t border-border py-4">
                     <div className="grid gap-3.5 sm:grid-cols-[240px_1fr]">
@@ -214,7 +280,44 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
         <Button variant="outline" className="h-11 w-full border-dashed" onClick={() => { const id = newKey(); setGroups([...groups, { id, t: "", d: "", ic: "factory", c: "violet" }]); setGOpen({ ...gOpen, [id]: true }); }}><Plus aria-hidden />Tambah tahap utama</Button>
       </Section>
 
-      <Section id="t-rn" title="3 · Susun rantai nilai" desc="Tiap tahap butuh nama, deskripsi singkat, dan tahap utamanya. Satu emiten boleh ada di lebih dari satu tahap.">
+      {/* COPY: perlu review (judul, petunjuk, label): bagian "Peta sektor" belum ada di desain. */}
+      <Section id="t-sm" title="3 · Peta sektor" desc="Tema ini adalah satu industri di sebuah sub-sektor. Setelah terbit, tampil sebagai baris di halaman sektor aplikasi.">
+        <div className="grid gap-3.5 sm:grid-cols-2">
+          <FormField label="Sub-sektor" htmlFor="sm-s">
+            <NativeSelect id="sm-s" aria-invalid={!!(smErr["sectorMap.subsectorId"] || errs.subsectorId)} disabled={!form.values.sectorSlug} value={sectorMap.subsectorId} onChange={(e) => setSM({ subsectorId: e.target.value })}>
+              <NativeSelectOption value="">Pilih sub-sektor…</NativeSelectOption>
+              {subsectors.map((x) => <NativeSelectOption key={x.id} value={x.id}>{x.name}</NativeSelectOption>)}
+            </NativeSelect>
+            {!form.values.sectorSlug ? <Help>Pilih sektor dulu.</Help> : !subsectors.length && <Help>Sektor ini belum punya sub-sektor.</Help>}
+            {(smErr["sectorMap.subsectorId"] || errs.subsectorId) && <Help className="text-(--sp-danger-text)">{smErr["sectorMap.subsectorId"] ?? errs.subsectorId}</Help>}
+          </FormField>
+          <FormField label="Ikon" htmlFor="sm-i">
+            <div className="flex items-center gap-2">
+              <span aria-hidden className="inline-flex size-9 flex-none items-center justify-center rounded-lg bg-sp-amber-bg text-sp-amber-text">{(() => { const I = SECTOR_ICON[sectorMap.icon]; return I ? <I className="size-4" /> : null; })()}</span>
+              <NativeSelect id="sm-i" aria-invalid={!!smErr["sectorMap.icon"]} value={sectorMap.icon} onChange={(e) => setSM({ icon: e.target.value })}>
+                <NativeSelectOption value="">Pilih ikon…</NativeSelectOption>
+                {SECTOR_ICONS.map(([k, l]) => <NativeSelectOption key={k} value={k}>{l}</NativeSelectOption>)}
+              </NativeSelect>
+            </div>
+            {smErr["sectorMap.icon"] && <Help className="text-(--sp-danger-text)">{smErr["sectorMap.icon"]}</Help>}
+          </FormField>
+        </div>
+        <FormField label="Status data" htmlFor="sm-d">
+          <NativeSelect id="sm-d" aria-invalid={!!smErr["sectorMap.dataStatus"]} value={sectorMap.dataStatus} onChange={(e) => setSM({ dataStatus: e.target.value as typeof sectorMap.dataStatus })}>
+            <NativeSelectOption value="soon">Segera hadir</NativeSelectOption>
+            <NativeSelectOption value="ready">Siap</NativeSelectOption>
+          </NativeSelect>
+          <Help>Label &ldquo;Baru&rdquo; dihitung otomatis setelah diterbitkan.</Help>
+          {smErr["sectorMap.dataStatus"] && <Help className="text-(--sp-danger-text)">{smErr["sectorMap.dataStatus"]}</Help>}
+        </FormField>
+        <FormField label="Catatan pembaruan" htmlFor="sm-n">
+          <Textarea id="sm-n" aria-invalid={sectorMap.updateNote.length > NOTE_MAX || !!errs.updateNote} className="min-h-16" value={sectorMap.updateNote} onChange={(e) => setSM({ updateNote: e.target.value })} placeholder="Tampil di banner “Data baru” di halaman sektor." />
+          <div className="flex justify-between gap-3"><span>{errs.updateNote && <Help className="text-(--sp-danger-text)">{errs.updateNote}</Help>}</span><Counter n={sectorMap.updateNote.length} max={NOTE_MAX} /></div>
+        </FormField>
+        {smErr.sectorMap && <Help className="text-(--sp-danger-text)">{smErr.sectorMap}</Help>}
+      </Section>
+
+      <Section id="t-rn" title="4 · Susun rantai nilai" desc="Tiap tahap butuh nama, deskripsi singkat, dan tahap utamanya. Satu emiten boleh ada di lebih dari satu tahap.">
         <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12.5px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5"><MousePointer2 aria-hidden className="size-3.5" />Tarik dari daftar kiri ke tahap untuk menambah</span>
           <span>Tarik antar tahap untuk memindahkan</span>
@@ -303,8 +406,8 @@ export function TemaBuilder({ view: loaded, sectors }: { view?: ThemeView; secto
           {checks.map(([l, c]) => <span key={l} className="inline-flex items-center gap-1.5"><i aria-hidden className={cn("inline-flex size-[18px] items-center justify-center rounded-full text-[10px] font-bold not-italic", c ? "bg-[#DCFCE7] text-sp-success" : "bg-[#FEF3C7] text-[#92400E]")}>{c ? "✓" : "!"}</i>{l}</span>)}
         </div>
         <span className="text-[13px] text-muted-foreground">Porsi boleh diisi nanti</span>
-        <Button type="submit" variant="outline" disabled={form.isSubmitting}>Simpan sebagai draf</Button>
-        {slug && <Button variant="secondary" disabled={form.isSubmitting} onClick={() => { intent.current = "publish"; void form.submitForm(); }}>Terbitkan</Button>}
+        <Button type="submit" variant="outline" disabled={form.isSubmitting || (!!slug && !dirty)}>Simpan sebagai draf</Button>
+        {slug && <Button variant="secondary" disabled={form.isSubmitting || !canPublish} onClick={() => { intent.current = "publish"; void form.submitForm(); }}>Terbitkan</Button>}
       </Card>
     </form>
   );

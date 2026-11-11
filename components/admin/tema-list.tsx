@@ -11,6 +11,7 @@ import type { ApiError } from "@/lib/admin-api";
 import { listThemes, mapCompany, type ThemeList, type ThemeStatus } from "@/lib/admin-themes";
 import { fmtWhen } from "@/lib/format";
 import { READY_MIN } from "@/lib/tema";
+import { SECTOR_ICON } from "@/lib/sector-icons";
 import { PALETTE } from "@/lib/tema-data";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -23,8 +24,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { EmptyResult, EntityAvatar, FilterTabs, PageHeader, PanelCard, ROW, SearchInput, StatCard, StatusBadge, type Tone } from "./form-ui";
 
 type Tab = "all" | ThemeStatus;
-const TABS: [Tab, string][] = [["all", "Semua"], ["open", "Terbuka"], ["draft", "Draf"], ["review", "Perlu ditinjau"]];
-const ST: Record<ThemeStatus, [string, Tone]> = { open: ["Terbuka", "success"], review: ["Perlu ditinjau", "warning"], draft: ["Draf", "neutral"] };
+const TABS: [Tab, string][] = [["all", "Semua"], ["open", "Terbuka"], ["map", "Peta sektor"], ["draft", "Draf"], ["review", "Perlu ditinjau"]]; // COPY: perlu review (label tab Peta sektor)
+const ST: Record<ThemeStatus, [string, Tone]> = { open: ["Terbuka", "success"], review: ["Perlu ditinjau", "warning"], draft: ["Draf", "neutral"], map: ["Peta sektor", "info"] };
+const DS: Record<"soon" | "ok" | "new", Tone> = { soon: "neutral", ok: "success", new: "info" };
 const AVATAR = ["#1C1917", "#92400E", "#1D4ED8", "#15803D", "#6D28D9", "#BE185D", "#0F766E", "#B45309"];
 const colorOf = (t: string) => AVATAR[[...t].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR.length];
 type Loaded = { key: string; data?: ThemeList; error?: ApiError };
@@ -68,7 +70,7 @@ export function TemaList() {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title="Tema & rantai nilai" desc="Peta emiten per tahap rantai nilai, lengkap dengan porsi pendapatannya."
+      <PageHeader title="Tema & Industri" desc="Peta emiten per tahap rantai nilai, lengkap dengan porsi pendapatannya."
         actions={<Link href="/admin/tema/baru" className={buttonVariants({ variant: "secondary" })}><Plus aria-hidden />Tambah tema</Link>} />
 
       <div className="grid grid-cols-2 gap-3.5 xl:grid-cols-4">
@@ -96,37 +98,42 @@ export function TemaList() {
           <EmptyResult title="Tidak ada tema yang cocok" desc="Coba kata lain, atau hapus filter status dan sektor." onReset={() => { setQ(""); setSec(""); setTab("all"); }} />
         ) : (
           <>
-            <Table className="min-w-[1000px]" aria-busy={loading}>
+            <Table className="min-w-[1100px]" aria-busy={loading}>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  {["Tema", "Tahap", "Emiten", "Kesiapan emiten", "Status", "Tesis", "Diperbarui"].map((h) => <TableHead key={h}>{h}</TableHead>)}
+                  {["Tema", "Tahap", "Emiten", "Kesiapan emiten", "Status", "Status data", "Tesis", "Diperbarui"].map((h) => <TableHead key={h}>{h}</TableHead>)}
                   <TableHead><span className="sr-only">Aksi</span></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className={cn(loading && loaded && "opacity-50")}>
                 {!loaded ? Array.from({ length: 6 }, (_, i) => (
-                  <TableRow key={i} className="hover:bg-transparent"><TableCell colSpan={8}><Skeleton className="h-8" /></TableCell></TableRow>
+                  <TableRow key={i} className="hover:bg-transparent"><TableCell colSpan={9}><Skeleton className="h-8" /></TableCell></TableRow>
                 )) : rows.map((t) => {
-                  const pct = t.readiness.percent;
+                  const rd = t.readiness; // null for "map" rows (sector-page line only, no chain)
+                  const pct = rd?.percent ?? 0;
+                  console.log(rows);
                   return (
                     <TableRow key={t.slug}>
                       <TableCell>
                         <Link href={`/admin/tema/${t.slug}`} className="group flex items-center gap-2.5">
-                          <span aria-hidden className="inline-flex size-8 flex-none items-center justify-center rounded-lg bg-sp-amber-bg text-sp-amber-text"><Share2 className="size-4" /></span>
+                          <span aria-hidden className="inline-flex size-8 flex-none items-center justify-center rounded-lg bg-sp-amber-bg text-sp-amber-text">{(() => { const I = (t.icon && SECTOR_ICON[t.icon]) || Share2; return <I className="size-4" />; })()}</span>
                           <span className="flex flex-col leading-tight"><b className="font-semibold group-hover:underline">{t.name}</b><em className="text-[12.5px] text-muted-foreground not-italic">{t.sector?.name ?? "—"}</em></span>
                         </Link>
                       </TableCell>
                       <TableCell title={t.chain.map((c) => c.group ?? "—").join(" → ")}>
                         <span className="flex items-center gap-[3px]">{t.chain.map((c, i) => <i key={i} className="h-1.5 w-3.5 rounded-full" style={{ background: (PALETTE[c.color] ?? PALETTE.stone)[2] }} />)}<small className="ml-1.5 font-mono text-[12.5px] text-sp-ink-2">{t.stageCount} tahap</small></span>
                       </TableCell>
-                      <TableCell className="font-mono text-[13px] text-sp-ink-2">{t.readiness.total}</TableCell>
+                      <TableCell className="font-mono text-[13px] text-sp-ink-2">{rd ? rd.total : "—"}</TableCell>
                       <TableCell className="w-[190px]" title="Garis abu-abu = batas 80%">
-                        <span className="flex flex-col gap-1">
-                          <span className="flex justify-between font-mono text-xs text-sp-ink-2"><span>{t.readiness.ready}/{t.readiness.total}</span><span>{pct}%</span></span>
-                          <Progress value={pct} aria-label={`Kesiapan ${t.name}`} trackClassName="relative after:absolute after:left-[80%] after:h-full after:w-px after:bg-sp-icon" indicatorClassName={pct >= READY_MIN ? "bg-foreground" : "bg-primary"} />
-                        </span>
+                        {rd ? (
+                          <span className="flex flex-col gap-1">
+                            <span className="flex justify-between font-mono text-xs text-sp-ink-2"><span>{rd.ready}/{rd.total}</span><span>{pct}%</span></span>
+                            <Progress value={pct} aria-label={`Kesiapan ${t.name}`} trackClassName="relative after:absolute after:left-[80%] after:h-full after:w-px after:bg-sp-icon" indicatorClassName={pct >= READY_MIN ? "bg-foreground" : "bg-primary"} />
+                          </span>
+                        ) : <span className="text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell><StatusBadge tone={ST[t.status][1]}>{t.statusLabel}</StatusBadge></TableCell>
+                      <TableCell className="text-[13px] leading-snug"><StatusBadge tone={DS[t.dataStatus.key]}>{t.dataStatus.label}</StatusBadge>{t.dataStatus.updatedAt && <small className="block text-xs text-muted-foreground">{fmtWhen(t.dataStatus.updatedAt)}</small>}</TableCell>
                       <TableCell className="font-mono text-[13px] text-sp-ink-2">{t.theses ? t.theses.toLocaleString("id-ID") : "—"}</TableCell>
                       <TableCell className="text-[13px] leading-snug">{fmtWhen(t.updatedAt)}<small className="block text-xs text-muted-foreground">{t.updatedBy}</small></TableCell>
                       <TableCell className="text-right"><Link href={`/admin/tema/${t.slug}`} className={buttonVariants({ variant: "outline", size: "sm" })}>Edit</Link></TableCell>
@@ -142,28 +149,6 @@ export function TemaList() {
           </>
         )}
       </Card>
-
-      <PanelCard id="um-h" title="Emiten belum masuk tema mana pun" aside={data ? `${data.unmapped.total.toLocaleString("id-ID")} emiten · ${data.unmapped.items.length} teratas dari antrian` : ""}
-        footer="Emiten baru masuk tema sebagai draf. Porsi pendapatannya diisi dari halaman tema.">
-        {(data?.unmapped.items ?? []).map((u) => {
-          const pick = picks[u.ticker] ?? u.suggestion?.slug ?? "";
-          const picked = options(u.suggestion).find((o) => o.slug === pick);
-          return (
-            <Item key={u.ticker} className={ROW}>
-              <ItemMedia><EntityAvatar code={u.ticker} logo={u.logoUrl ?? undefined} size={32} color={colorOf(u.ticker)} /></ItemMedia>
-              <ItemContent className="gap-0"><ItemTitle className="font-mono"><Link href={`/admin/emiten/${u.ticker}`} className="hover:underline">{u.ticker}</Link></ItemTitle><ItemDescription className="text-[12.5px]">{u.name}</ItemDescription></ItemContent>
-              <ItemActions>
-                <NativeSelect size="sm" aria-label={`Tema untuk ${u.ticker}`} className="w-[260px]" value={pick} onChange={(e) => setPicks({ ...picks, [u.ticker]: e.target.value })}>
-                  <NativeSelectOption value="">Pilih tema…</NativeSelectOption>
-                  {options(u.suggestion).map((t) => <NativeSelectOption key={t.slug} value={t.slug}>{t.name}</NativeSelectOption>)}
-                </NativeSelect>
-                <Button variant="secondary" size="sm" aria-disabled={!picked} disabled={busy === u.ticker} onClick={() => { if (picked) void map(u.ticker, picked.slug, picked.name); }}>Petakan</Button>
-              </ItemActions>
-              <ItemFooter><ItemDescription className="text-[12.5px]">{u.note}</ItemDescription></ItemFooter>
-            </Item>
-          );
-        })}
-      </PanelCard>
     </div>
   );
 }

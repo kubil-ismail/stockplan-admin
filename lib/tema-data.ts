@@ -19,3 +19,8 @@ export const PALETTE: Record<string, [string, string, string, string, string, st
   teal: ["Toska", "#F0FBFA", "#14B8A6", "#E6F7F5", "#0F766E", "#99F6E4"],
   stone: ["Abu-abu", "#FAFAF9", "#78716C", "#F5F5F4", "#44403C", "#E7E5E4"],
 };
+// Sector-page icon vocabulary of the API (SECTOR_ICONS); separate from the stage ICONS above. Labels: COPY: perlu review
+export const SECTOR_ICONS: [string, string][] = [
+  ["bolt", "Listrik"], ["cube", "Kubus"], ["factory", "Pabrik"], ["basket", "Keranjang"], ["bag", "Tas belanja"], ["plus", "Plus"], ["bank", "Bank"], ["building", "Gedung"],
+  ["chip", "Cip"], ["tower", "Menara"], ["truck", "Truk"], ["flame", "Api"], ["droplet", "Tetesan"], ["wrench", "Kunci pas"], ["sun", "Matahari"], ["leaf", "Daun"],
+];
