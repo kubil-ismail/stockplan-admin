@@ -238,12 +238,17 @@ Perubahan peran berlaku **langsung** di request berikutnya (bukan "di sesi berik
 | AdminRiwayat | `GET /admin/api/history?q=&module=&who=&range=&tab=&page=&pageSize=` | `log:view` | Dikelompokkan per hari. Tiap entri: pelaku, kalimat (`verb`/`target`/`rest`), `changes` (sebelum/sesudah), `canRevert` |
 | | `GET /admin/api/history/export.csv` | `log:view` | Filter sama, maks. 5.000 baris |
 | | `POST /admin/api/history/:id/revert` | `log:edit` + izin modul terkait | `409 CONFLICT` bila data sudah berubah lagi sejak entri itu |
+| AdminSinkron | `GET /admin/api/sync` | `sync:view` | `stats`, `jobs` (status `running`/`queued`/`failed`/`ok`/`never`, `summary` sudah jadi teks), `failures`, `conflicts` (`changes` = Di StockPlan vs Dari BEI), `history` 14 hari. Poll selama ada job `running`/`queued` |
+| | `POST /admin/api/sync/run { key? }` | `sync:edit` | Masuk antrean crawler, bukan langsung selesai. Tanpa `key` = semua |
+| | `POST /admin/api/sync/failures/:id/retry` | `sync:edit` | "Coba lagi". Baris tetap ada (`retrying: true`) sampai crawler melapor berhasil |
+| | `POST /admin/api/sync/conflicts/:id/resolve { use: 'bei' \| 'team' }` | `sync:edit` (+ `em:edit` untuk `bei`) | `bei` menulis ke **draf** emiten (perlu Terbitkan), bisa Kembalikan dari Riwayat. `409 ALREADY_RESOLVED` |
 
 Pengaman di Akses & peran yang perlu tercermin di UI (server menolaknya dengan 403/409): tidak bisa mengubah atau menonaktifkan diri sendiri; hanya super admin yang bisa memberi/mencabut peran super admin; minimal satu super admin aktif; izin super admin tidak bisa diubah; tidak bisa mengubah izin peran yang sedang dipegang sendiri.
 
 ### 4.5 Belum tersedia di API (admin)
 
-- Modul Dashboard, Masukan & laporan, Sinkron data BEI, Pengaturan aplikasi (modulnya sudah ada di matriks izin, endpoint-nya belum).
+- Modul Dashboard, Masukan & laporan, Pengaturan aplikasi (modulnya sudah ada di matriks izin, endpoint-nya belum).
+- Sinkron data BEI: endpoint ada, tetapi datanya kosong sampai `stock-plan-crawler` diarahkan ke `/admin/api/sync/agent/*` (lihat Swagger, tag Admin: Sinkron). Sebelum itu semua job berstatus `never`.
 - Upload file: logo emiten, laporan keuangan, prospektus IPO.
 - `reportCount` emiten selalu 0. Kolom tesis, evaluasi, dan "tema dibuka" di Pengguna selalu 0/kosong. Angka "dipakai N tesis" di Tema selalu `null`.
 - Hapus peran/anggota, reset password admin.
