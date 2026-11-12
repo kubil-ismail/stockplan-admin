@@ -21,7 +21,7 @@ export const ADMIN_NAV: { section?: string; items: Item[] }[] = [
   {
     section: "Data",
     items: [
-      { href: "/admin/emiten", label: "Data emiten", icon: Building2, badge: 37 },
+      { href: "/admin/emiten", label: "Data emiten", icon: Building2},
       { href: "/admin/tema", label: "Tema & Industri", icon: Share2 },
     ],
   },

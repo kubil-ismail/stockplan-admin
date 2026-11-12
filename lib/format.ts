@@ -12,3 +12,6 @@ export function fmtWhen(iso: string, now = new Date()): string {
   if (dayKey(d) === dayKey(yesterday)) return `Kemarin, ${time}`;
   return `${d.getDate()} ${BLN[d.getMonth()]} ${d.getFullYear()}`;
 }
+
+/** "Kamis, 5 November 2026" in Asia/Jakarta (dashboard header, from the server clock). */
+export const longDate = (iso: string) => new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Jakarta" }).format(new Date(iso));

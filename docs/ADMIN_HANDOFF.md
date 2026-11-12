@@ -105,8 +105,9 @@ Cara memanggil API di tiap halaman ada di FRONTEND_HANDOFF §3.1. Di dev, email 
 
 Supaya client tidak mengira data ini sudah ada:
 
-- **Dashboard, Masukan & laporan, Pengaturan aplikasi** masih memakai data contoh dari design (ditandai `shortcut:` di `components/admin/dashboard-view.tsx`, `lib/masukan.ts`, `lib/pengaturan.ts`). Endpoint backend-nya juga belum ada.
-- **Sinkron data BEI**: halaman admin sudah memakai `/admin/api/sync` (`lib/admin-sync.ts`), tetapi crawler belum diarahkan ke backend ini, jadi semua job berstatus "Belum pernah" dan datanya kosong sampai crawler melapor. Pengaturan aplikasi yang diubah di admin **tidak** sampai ke client.
+- **Masukan & laporan, Pengaturan aplikasi** masih memakai data contoh dari design (ditandai `shortcut:` di `lib/masukan.ts`, `lib/pengaturan.ts`). Endpoint backend-nya juga belum ada.
+- **Dashboard**: sudah memakai `GET /admin/api/dashboard` (`lib/admin-dashboard.ts`). Item antrean "Laporan Data salah" dan "Laporan keuangan belum diproses" serta angka "dari laporan pengguna" belum ada di backend, jadi tidak tampil. Blok yang `null` karena izin disembunyikan.
+- **Sinkron data BEI**: endpoint backend sudah ada (`/admin/api/sync`, lihat FRONTEND_HANDOFF §4.4), tetapi admin masih memakai `lib/sinkron.ts`. Crawler juga belum diarahkan ke backend ini, jadi data sinkron masih kosong. Pengaturan aplikasi yang diubah di admin **tidak** sampai ke client.
 - **Halaman `/admin/undangan`** (aktivasi undangan admin) belum dibuat.
 - **`perms` dari `GET /admin/api/auth/me`** belum dipakai untuk menyembunyikan menu/tombol. Server tetap menolak dengan 403, jadi aman, tetapi admin dengan peran terbatas masih melihat tombol yang akan gagal.
 - **Logo emiten**: admin hanya meneruskan `/admin/api/*` ke backend. `logoUrl` (`/logos/emiten/…`) dibaca dari `public/logos/` milik admin, yang baru berisi sebagian logo. Logo lain tampil sebagai inisial. Perbaikan: tambah rewrite `/logos/:path*` ke backend di `next.config.ts`.
